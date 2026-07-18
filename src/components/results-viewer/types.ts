@@ -16,6 +16,20 @@ export interface ResultsViewerProps {
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
   showPagination?: boolean;
+  connectionId?: string;
+  pkColumns?: string[];
+  onAddColumn?: () => void;
+}
+
+export interface PendingChange {
+  id: string;
+  schema: string;
+  table: string;
+  columnName: string;
+  dataType: string;
+  pkValues: Record<string, unknown>;
+  originalValue: unknown;
+  newValue: unknown;
 }
 
 export const ITEMS_PER_PAGE = 500;

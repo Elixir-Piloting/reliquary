@@ -4,14 +4,14 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { MainLayout } from "@/components/main-layout";
 import { DatabaseNavbar } from "@/components/database-navbar";
 import { TableTabs, type TableTab } from "@/components/table-tabs";
-import { CreateTableDialog } from "@/components/create-table-dialog";
+import { TableEditor } from "@/components/table-editor";
 import { ResultsViewer } from "@/components/results-viewer";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getConnection } from "@/lib/connections/store";
 import { Persistence } from "@/lib/persistence";
-import type { ConnectionConfig, QueryResult } from "@/lib/db/types";
+import type { ConnectionConfig, QueryResult, ColumnInfo } from "@/lib/db/types";
 import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
@@ -55,7 +55,7 @@ export default function DatabaseView() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
-  const [createTableOpen, setCreateTableOpen] = useState(false);
+  const [pkColumns, setPkColumns] = useState<Record<string, string[]>>({});
 
   const activeTab = tableTabs.find(t => t.id === activeTabId);
 
@@ -95,6 +95,24 @@ export default function DatabaseView() {
     });
   }, []);
 
+  const openCreateTab = useCallback((schema: string) => {
+    const tabId = `__create_${schema}_${Date.now()}`;
+    const newTab: TableTab = { id: tabId, schema, table: "", label: "New Table", type: "create" };
+    setTableTabs(prev => [...prev, newTab]);
+    setActiveTabId(tabId);
+  }, []);
+
+  const openEditTab = useCallback((schema: string, table: string) => {
+    const tabId = `__edit_${schema}.${table}`;
+    setTableTabs(prev => {
+      const existing = prev.find(t => t.id === tabId);
+      if (existing) { setActiveTabId(tabId); return prev; }
+      const newTab: TableTab = { id: tabId, schema, table, label: `Edit ${schema}.${table}`, type: "edit" };
+      setActiveTabId(tabId);
+      return [...prev, newTab];
+    });
+  }, []);
+
   const closeTab = useCallback((tabId: string) => {
     setTableTabs(prev => {
       const newTabs = prev.filter(t => t.id !== tabId);
@@ -113,6 +131,14 @@ export default function DatabaseView() {
       if (schema && table) openTable(schema, table);
     }
   }, [searchParams, openTable]);
+
+  useEffect(() => {
+    if (!connectionId || !activeTab) return;
+    if (pkColumns[activeTab.id]) return;
+    invoke<ColumnInfo[]>("get_columns", { connectionId, schema: activeTab.schema, table: activeTab.table })
+      .then(cols => setPkColumns(prev => ({ ...prev, [activeTab.id]: cols.filter(c => c.isPrimaryKey).map(c => c.columnName) })))
+      .catch(console.error);
+  }, [connectionId, activeTab]);
 
   const fetchData = useCallback(async () => {
     if (!connectionId || !activeTab) return;
@@ -136,6 +162,7 @@ export default function DatabaseView() {
 
   const totalPages = result?.rowCount ? Math.ceil(result.rowCount / pageSize) : 0;
   const schemaName = activeTab?.schema || (searchParams.get("newTable") || "public");
+  const isEditorTab = activeTab?.type === "create" || activeTab?.type === "edit";
 
   return (
     <MainLayout>
@@ -144,7 +171,16 @@ export default function DatabaseView() {
         <div className="flex flex-1 overflow-hidden">
           <div className="flex-1 flex flex-col overflow-hidden">
             <TableTabs tabs={tableTabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} />
-            {activeTab ? (
+            {activeTab && isEditorTab ? (
+              <TableEditor
+                mode={activeTab.type === "create" ? "create" : "edit"}
+                schema={activeTab.schema}
+                table={activeTab.table || undefined}
+                connectionId={connectionId || ""}
+                onCreated={(s, t) => { closeTab(activeTab.id); openTable(s, t); }}
+                onDone={() => closeTab(activeTab.id)}
+              />
+            ) : activeTab ? (
               <div className="flex-1 flex flex-col overflow-hidden">
                 <div className="h-auto min-h-12 border-b border-border flex items-center justify-between px-6 py-2 shrink-0 bg-muted/20">
                   <div className="flex items-center gap-3">
@@ -185,13 +221,17 @@ export default function DatabaseView() {
                         <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage(totalPages)}><ChevronsRight className="h-3 w-3" /></Button>
                       </div>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => setCreateTableOpen(true)}><Plus className="h-4 w-4 mr-1" />New Table</Button>
+                    <Button variant="outline" size="sm" onClick={() => openCreateTab(schemaName)}><Plus className="h-4 w-4 mr-1" />New Table</Button>
+                    <div id="review-changes-slot" />
                   </div>
                 </div>
                 <div className="flex-1 overflow-hidden px-6 pb-6 pt-4">
                   <ResultsViewer result={result} error={error} loading={loading}
                     schema={activeTab.schema} table={activeTab.table}
-                    onRefresh={fetchData} provider={connection?.provider} />
+                    onRefresh={fetchData} provider={connection?.provider}
+                    connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
+                    enableCRUD={true}
+                    onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)} />
                 </div>
               </div>
             ) : (
@@ -199,15 +239,13 @@ export default function DatabaseView() {
                 <div className="text-center space-y-4">
                   <p className="text-muted-foreground">No table selected</p>
                   <p className="text-sm text-muted-foreground">Select a table from the schema explorer to view its data</p>
-                  <Button variant="outline" size="sm" onClick={() => setCreateTableOpen(true)}><Plus className="h-4 w-4 mr-1" />Create New Table</Button>
+                  <Button variant="outline" size="sm" onClick={() => openCreateTab(schemaName)}><Plus className="h-4 w-4 mr-1" />Create New Table</Button>
                 </div>
               </div>
             )}
           </div>
         </div>
       </div>
-      <CreateTableDialog open={createTableOpen} onOpenChange={setCreateTableOpen} schema={schemaName}
-        connectionId={connectionId || ""} onTableCreated={() => { setTableTabs([]); }} />
     </MainLayout>
   );
 }

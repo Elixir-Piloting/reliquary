@@ -193,3 +193,5 @@ pub fn sqlite_execute_query(conn: &SqliteConnection, query: &str) -> Result<Quer
     let elapsed = start.elapsed().as_millis() as u64;
     Ok(QueryResult { columns: vec![], rows: vec![], row_count: 0, affected_rows: Some(affected as u64), is_select: false, execution_time_ms: elapsed })
 }
+
+

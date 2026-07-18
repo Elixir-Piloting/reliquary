@@ -37,8 +37,7 @@ pub fn parse_pg_url(url: &str) -> Result<(String, String, String, String, String
     } else {
         (no_qs, "5432".to_string(), "")
     };
-    let ssl = if url.contains("sslmode=require") || url.contains("ssl=true") { "require" } else { "" };
-    Ok((urlencoding_or_raw(h), p, urlencoding_or_raw(d), user, pass, ssl.to_string()))
+    Ok((urlencoding_or_raw(h), p, urlencoding_or_raw(d), user, pass, String::new()))
 }
 
 pub fn urlencoding_or_raw(s: &str) -> String {
@@ -324,4 +323,15 @@ pub fn pg_value(row: &tokio_postgres::Row, i: usize) -> serde_json::Value {
     } else {
         row.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null)
     }
+}
+
+pub async fn pg_get_enum_values(client: &PgClient, type_name: &str) -> Result<Vec<String>, String> {
+    let rows = client
+        .query(
+            "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON e.enumtypid = t.oid WHERE t.typname = $1 ORDER BY e.enumsortorder",
+            &[&type_name],
+        )
+        .await
+        .map_err(|e| format!("enum query: {}", e))?;
+    Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
 }

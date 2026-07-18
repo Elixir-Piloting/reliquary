@@ -7,7 +7,7 @@ export interface TableTab {
   schema: string;
   table: string;
   label: string;
-  type?: "view" | "create";
+  type?: "view" | "create" | "edit";
 }
 
 interface TableTabsProps {
@@ -27,7 +27,7 @@ export function TableTabs({ tabs, activeTabId, onTabSelect, onTabClose }: TableT
           activeTabId === tab.id ? "bg-background border-t border-x border-border text-foreground font-medium" : "text-muted-foreground"
         )}>
           <button onClick={() => onTabSelect(tab.id)} className="flex-1 flex items-center gap-2 text-left">
-            <span className="whitespace-nowrap">{tab.label}</span>
+            <span className={cn("whitespace-nowrap", tab.type === "create" && "text-blue-500", tab.type === "edit" && "text-amber-500")}>{tab.label}</span>
           </button>
           <span className="h-4 w-4 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive cursor-pointer flex items-center justify-center rounded transition-colors"
             onClick={e => { e.stopPropagation(); onTabClose(tab.id); }} title="Close tab">

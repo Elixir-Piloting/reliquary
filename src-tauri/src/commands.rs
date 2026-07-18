@@ -289,6 +289,20 @@ pub async fn execute_query(connection_id: String, query: String, state: tauri::S
 }
 
 #[tauri::command]
+pub async fn get_enum_values(connection_id: String, type_name: String, state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
+    let guard = state.connections.lock().await;
+    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
+    drop(guard);
+    if let Some(client) = pg_client {
+        pg::pg_get_enum_values(&client, &type_name).await
+    } else if sql_arc.is_some() {
+        Ok(vec![])
+    } else {
+        Err("Not connected".into())
+    }
+}
+
+#[tauri::command]
 pub async fn detect_local_servers(_state: tauri::State<'_, AppState>) -> Result<Vec<LocalPgServer>, String> {
     use tokio::net::TcpStream;
     let ports: Vec<u16> = (5432..=5435).collect();

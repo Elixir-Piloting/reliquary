@@ -41,6 +41,7 @@ pub fn run() {
             commands::get_schema_relationships,
             commands::get_table_data,
             commands::execute_query,
+            commands::get_enum_values,
             commands::detect_local_servers,
             commands::list_local_databases,
             commands::create_local_database,

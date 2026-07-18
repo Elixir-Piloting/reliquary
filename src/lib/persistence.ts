@@ -22,13 +22,13 @@ export const Persistence = {
     localStorage.setItem(`${STORAGE_PREFIX}view_${connectionId}`, view);
   },
 
-  getTableTabs(connectionId: string): Array<{ id: string; schema: string; table: string; label: string; type?: "view" | "create" }> {
+  getTableTabs(connectionId: string): Array<{ id: string; schema: string; table: string; label: string; type?: "view" | "create" | "edit" }> {
     if (typeof window === "undefined") return [];
     try { const stored = localStorage.getItem(`${STORAGE_PREFIX}tabs_${connectionId}`); return stored ? JSON.parse(stored) : []; }
     catch { return []; }
   },
 
-  setTableTabs(connectionId: string, tabs: Array<{ id: string; schema: string; table: string; label: string; type?: "view" | "create" }>): void {
+  setTableTabs(connectionId: string, tabs: Array<{ id: string; schema: string; table: string; label: string; type?: "view" | "create" | "edit" }>): void {
     if (typeof window === "undefined") return;
     localStorage.setItem(`${STORAGE_PREFIX}tabs_${connectionId}`, JSON.stringify(tabs));
   },
