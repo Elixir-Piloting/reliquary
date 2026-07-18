@@ -1,7 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Loader2 } from "lucide-react";
+import { Loader2, Download } from "lucide-react";
 import type { ColumnInfo, TableNode, RelationshipEdge } from "./types";
 import { TABLE_HEADER_HEIGHT, COLUMN_HEIGHT, TABLE_MIN_WIDTH, TABLE_PADDING } from "./types";
 import type { SchemaInfo, ColumnInfo as RustColumnInfo, RelationshipInfo } from "@/lib/db/types";
@@ -25,6 +25,54 @@ function themeColors(isDark: boolean) {
   };
 }
 
+function autoLayout(tables: TableNode[], relationships: RelationshipEdge[]) {
+  if (!tables.length) return [];
+  const tableMap = new Map(tables.map(t => [t.id, t]));
+  const tableIds = tables.map(t => t.id);
+  const deps = new Map<string, Set<string>>();
+  const dependedBy = new Map<string, Set<string>>();
+  for (const rel of relationships) {
+    if (!deps.has(rel.from)) deps.set(rel.from, new Set());
+    deps.get(rel.from)!.add(rel.to);
+    if (!dependedBy.has(rel.to)) dependedBy.set(rel.to, new Set());
+    dependedBy.get(rel.to)!.add(rel.from);
+  }
+  const inDegree = new Map<string, number>();
+  for (const id of tableIds) inDegree.set(id, deps.get(id)?.size ?? 0);
+  const layers: string[][] = [];
+  const processed = new Set<string>();
+  while (processed.size < tableIds.length) {
+    let layer = tableIds.filter(id => !processed.has(id) && (inDegree.get(id) ?? 0) === 0);
+    if (!layer.length) {
+      let minD = Infinity;
+      for (const id of tableIds) if (!processed.has(id)) minD = Math.min(minD, inDegree.get(id) ?? 0);
+      layer = tableIds.filter(id => !processed.has(id) && (inDegree.get(id) ?? 0) === minD).slice(0, 1);
+    }
+    layer.sort();
+    for (const id of layer) {
+      processed.add(id);
+      inDegree.set(id, 0);
+      for (const dep of dependedBy.get(id) ?? []) if (!processed.has(dep)) inDegree.set(dep, (inDegree.get(dep) ?? 1) - 1);
+    }
+    layers.push(layer);
+  }
+  const H_GAP = 50, V_GAP = 60, PAD = 50;
+  const positions: { id: string; x: number; y: number }[] = [];
+  let curY = PAD;
+  for (const layer of layers) {
+    let curX = PAD, maxH = 0;
+    for (const id of layer) {
+      const t = tableMap.get(id);
+      if (!t) continue;
+      positions.push({ id, x: curX, y: curY });
+      curX += t.width + H_GAP;
+      maxH = Math.max(maxH, t.height);
+    }
+    curY += maxH + V_GAP;
+  }
+  return positions;
+}
+
 export default function SchemaVisualizer({ connectionId }: { connectionId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [schemas, setSchemas] = useState<string[]>([]);
@@ -37,6 +85,7 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
   const [zoom, setZoom] = useState(0.8);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isLocked, setIsLocked] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
   const [dark, setDark] = useState(() => isDarkMode());
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const panRef = useRef<{ startX: number; startY: number; origPan: { x: number; y: number } } | null>(null);
@@ -102,14 +151,19 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
             schema: currentSchema,
             name: t.tableName,
             columns,
-            x: (i % 6) * 280 + 50,
-            y: Math.floor(i / 6) * 250 + 50,
+            x: 0,
+            y: 0,
             width: w,
             height: h,
           });
         } catch { }
       }
 
+      const layout = autoLayout(tableNodes, relEdges);
+      for (const p of layout) {
+        const t = tableNodes.find(n => n.id === p.id);
+        if (t) { t.x = p.x; t.y = p.y; }
+      }
       setTables(tableNodes);
       setRelationships(relEdges);
     } catch (e) { console.error(e); }
@@ -242,7 +296,18 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
 
         ctx.fillStyle = colors.textMuted;
         ctx.font = "10px system-ui, -apple-system, sans-serif";
-        ctx.fillText(col.type, table.x + table.width * 0.5, cy);
+        ctx.textAlign = "left";
+        const typeStartX = table.x + table.width * 0.5;
+        const typeEndX = (col.isPrimaryKey || col.isForeignKey)
+          ? table.x + table.width - 50
+          : table.x + table.width - 10;
+        let typeText = col.type;
+        if (ctx.measureText(typeText).width > typeEndX - typeStartX) {
+          while (ctx.measureText(typeText + "...").width > typeEndX - typeStartX && typeText.length > 0)
+            typeText = typeText.slice(0, -1);
+          typeText += "...";
+        }
+        ctx.fillText(typeText, typeStartX, cy);
 
         const iconX = table.x + table.width - 40;
         if (col.isPrimaryKey) {
@@ -300,7 +365,7 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (isLocked) { panRef.current = { startX: e.clientX, startY: e.clientY, origPan: { ...pan } }; return; }
+    if (isLocked) { panRef.current = { startX: e.clientX, startY: e.clientY, origPan: { ...pan } }; setIsPanning(true); return; }
     const hit = hitTest(e.clientX, e.clientY);
     if (hit) {
       setSelectedTable(hit);
@@ -310,6 +375,7 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
     } else {
       setSelectedTable(null);
       panRef.current = { startX: e.clientX, startY: e.clientY, origPan: { ...pan } };
+      setIsPanning(true);
     }
   };
 
@@ -325,12 +391,31 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
     }
   };
 
-  const handleMouseUp = () => { dragRef.current = null; panRef.current = null; setDragTable(null); };
+  const handleMouseUp = () => { dragRef.current = null; panRef.current = null; setDragTable(null); setIsPanning(false); };
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const delta = -e.deltaY * 0.001;
     setZoom(z => Math.max(0.1, Math.min(3, z + delta)));
   };
+
+  const exportPNG = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = `schema-${currentSchema}-${Date.now()}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
+
+  const bounds = useMemo(() => {
+    if (tables.length === 0) return { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
+    return {
+      minX: Math.min(...tables.map(t => t.x)),
+      minY: Math.min(...tables.map(t => t.y)),
+      maxX: Math.max(...tables.map(t => t.x + t.width)),
+      maxY: Math.max(...tables.map(t => t.y + t.height)),
+    };
+  }, [tables]);
 
   return (
     <div className="flex flex-col h-full">
@@ -346,8 +431,20 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
           </button>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <button onClick={exportPNG} className="flex items-center gap-1 hover:text-foreground">
+            <Download className="h-3.5 w-3.5" /> Export PNG
+          </button>
           <span>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoom(0.8)} className="hover:text-foreground">Reset</button>
+          <button onClick={() => {
+            setZoom(0.8);
+            setTables(prev => {
+              const layout = autoLayout(prev, relationships);
+              return prev.map(t => {
+                const p = layout.find(l => l.id === t.id);
+                return p ? { ...t, x: p.x, y: p.y } : t;
+              });
+            });
+          }} className="hover:text-foreground">Reset</button>
           <label className="flex items-center gap-1 cursor-pointer">
             <input type="checkbox" checked={isLocked} onChange={e => setIsLocked(e.target.checked)} className="h-3 w-3" />
             Lock
@@ -371,8 +468,37 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
-          className="absolute inset-0 cursor-move"
+          className={`absolute inset-0 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
         />
+        {tables.length > 0 && (
+          <div className="absolute bottom-4 right-4 bg-background/95 backdrop-blur-sm border border-border rounded-lg p-2">
+            <div className="text-xs font-medium mb-1.5 text-muted-foreground">Overview</div>
+            <div
+              className="relative border border-border rounded"
+              style={{ width: 180, height: 135, backgroundColor: dark ? "hsl(240, 4%, 14%)" : "hsl(0, 0%, 95%)" }}
+            >
+              <svg width="180" height="135" className="absolute inset-0" style={{ overflow: "visible" }}>
+                {tables.map(table => {
+                  const pad = 200;
+                  const scaleX = 180 / (bounds.maxX - bounds.minX + pad);
+                  const scaleY = 135 / (bounds.maxY - bounds.minY + pad);
+                  return (
+                    <rect
+                      key={table.id}
+                      x={(table.x - bounds.minX) * scaleX}
+                      y={(table.y - bounds.minY) * scaleY}
+                      width={Math.max(2, table.width * scaleX)}
+                      height={Math.max(2, table.height * scaleY)}
+                      fill="hsla(212, 100%, 55%, 0.3)"
+                      stroke="hsl(212, 100%, 55%)"
+                      strokeWidth={1}
+                    />
+                  );
+                })}
+              </svg>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

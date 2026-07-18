@@ -29,5 +29,5 @@ export interface RelationshipEdge {
 
 export const TABLE_HEADER_HEIGHT = 32;
 export const COLUMN_HEIGHT = 24;
-export const TABLE_MIN_WIDTH = 220;
+export const TABLE_MIN_WIDTH = 280;
 export const TABLE_PADDING = 12;
