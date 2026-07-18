@@ -14,6 +14,14 @@ interface SQLEditorProps {
 export function SQLEditor({ value, onChange, onExecute, disabled = false, language = "sql" }: SQLEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [monaco, setMonaco] = useState<any>(null);
+  const [dark, setDark] = useState(false);
+
+  useEffect(() => {
+    setDark(document.documentElement.classList.contains("dark"));
+    const obs = new MutationObserver(() => setDark(document.documentElement.classList.contains("dark")));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -38,7 +46,7 @@ export function SQLEditor({ value, onChange, onExecute, disabled = false, langua
 
   return (
     <div className="h-full border-t border-border">
-      <Editor height="100%" defaultLanguage={language} language={language} theme="vs-dark"
+      <Editor height="100%" defaultLanguage={language} language={language} theme={dark ? "vs-dark" : "vs"}
         value={value} onChange={val => onChange(val || "")}
         onMount={editor => { editorRef.current = editor; }}
         options={{ minimap: { enabled: false }, fontSize: 14, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, readOnly: disabled }}
