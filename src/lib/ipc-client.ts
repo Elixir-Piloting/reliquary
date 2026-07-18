@@ -162,14 +162,14 @@ const API = {
   async detectLocalServers(): Promise<LocalPgServer[]> {
     return invoke("detect_local_servers");
   },
-  async listLocalDatabases(host: string, port: number): Promise<LocalPgDatabase[]> {
-    return invoke("list_local_databases", { host, port });
+  async listLocalDatabases(host: string, port: number, user?: string, password?: string): Promise<LocalPgDatabase[]> {
+    return invoke("list_local_databases", { host, port, user, password });
   },
-  async createLocalDatabase(host: string, port: number, dbName: string): Promise<void> {
-    return invoke("create_local_database", { host, port, dbName });
+  async createLocalDatabase(host: string, port: number, dbName: string, user?: string, password?: string): Promise<void> {
+    return invoke("create_local_database", { host, port, dbName, user, password });
   },
-  async dropLocalDatabase(host: string, port: number, dbName: string): Promise<void> {
-    return invoke("drop_local_database", { host, port, dbName });
+  async dropLocalDatabase(host: string, port: number, dbName: string, user?: string, password?: string): Promise<void> {
+    return invoke("drop_local_database", { host, port, dbName, user, password });
   },
 };
 

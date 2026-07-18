@@ -8,7 +8,7 @@ import type { SchemaInfo, ColumnInfo as RustColumnInfo, RelationshipInfo } from 
 
 function isDarkMode() {
   if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return document.documentElement.classList.contains("dark");
 }
 
 function themeColors(isDark: boolean) {
@@ -37,8 +37,15 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
   const [zoom, setZoom] = useState(0.8);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isLocked, setIsLocked] = useState(false);
+  const [dark, setDark] = useState(() => isDarkMode());
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const panRef = useRef<{ startX: number; startY: number; origPan: { x: number; y: number } } | null>(null);
+
+  useEffect(() => {
+    const obs = new MutationObserver(() => setDark(document.documentElement.classList.contains("dark")));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     invoke<SchemaInfo[]>("get_schemas", { connectionId }).then(r => {
@@ -119,7 +126,6 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
     const container = canvas.parentElement;
     if (!container) return;
 
-    const dark = isDarkMode();
     const colors = themeColors(dark);
     const dpr = window.devicePixelRatio || 1;
     const rect = container.getBoundingClientRect();
@@ -257,7 +263,7 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
     }
 
     ctx.restore();
-  }, [tables, relationships, selectedTable, dragTable, zoom, pan]);
+  }, [tables, relationships, selectedTable, dragTable, zoom, pan, dark]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -311,7 +317,9 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
     if (dragRef.current) {
       const dx = (e.clientX - dragRef.current.startX) / zoom;
       const dy = (e.clientY - dragRef.current.startY) / zoom;
-      setTables(prev => prev.map(t => t.id === dragTable ? { ...t, x: dragRef.current!.origX + dx, y: dragRef.current!.origY + dy } : t));
+      const origX = dragRef.current.origX;
+      const origY = dragRef.current.origY;
+      setTables(prev => prev.map(t => t.id === dragTable ? { ...t, x: origX + dx, y: origY + dy } : t));
     } else if (panRef.current) {
       setPan({ x: panRef.current.origPan.x + e.clientX - panRef.current.startX, y: panRef.current.origPan.y + e.clientY - panRef.current.startY });
     }

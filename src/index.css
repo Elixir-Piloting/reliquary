@@ -150,4 +150,18 @@
   .text-destructive-foreground { color: hsl(var(--destructive-foreground)); }
   .border-input { border-color: hsl(var(--input)); }
   .ring-ring { --tw-ring-color: hsl(var(--ring)); }
+  .no-ring { --tw-ring-opacity: 0 !important; }
+}
+
+.marketing-buttons button:not(.no-ring),
+.marketing-inputs input:not(.no-ring) {
+  outline: none;
+}
+
+@media (hover: hover) {
+  .marketing-buttons button:focus-visible,
+  .marketing-inputs input:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
 }

@@ -6,6 +6,7 @@ import { getConnections, deleteConnection } from "@/lib/connections/store";
 import { getProviderMetadata } from "@/lib/db/providers";
 import type { ConnectionConfig } from "@/lib/db/types";
 import { buildConnectionURL } from "@/lib/connections/url-parser";
+import { getSubtleBackground } from "@/lib/utils/color";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AppLogo } from "@/components/app-logo";
@@ -18,10 +19,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 function ProviderIcon({ provider, className }: { provider: string; className?: string }) {
   const meta = getProviderMetadata(provider as any);
+  if (!meta) return <div className={cn("w-5 h-5 rounded-sm bg-muted", className)} />;
   return (
     <div className={cn("relative w-5 h-5 shrink-0 rounded-sm flex items-center justify-center", className)}
-      style={{ backgroundColor: meta?.color + "20" }}>
-      <span className="text-xs font-bold" style={{ color: meta?.color }}>{meta?.name?.charAt(0) || "?"}</span>
+      style={{ backgroundColor: getSubtleBackground(meta.color, 1.0) }}>
+      <span className="text-xs font-bold" style={{ color: meta.color === "#FFFFFF" || meta.color === "#000000" ? "#1d1d1f" : "#fff" }}>{meta.name.charAt(0)}</span>
     </div>
   );
 }
@@ -91,7 +93,7 @@ export default function HomePage() {
           <span className="font-medium">Relic</span>
         </div>
       </header>
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto marketing-buttons marketing-inputs">
         <div className="max-w-xl mx-auto p-6">
           <div className="space-y-8 pt-8">
             <div className="space-y-2">
@@ -113,7 +115,7 @@ export default function HomePage() {
                 {!searchQuery && <Button onClick={() => navigate("/add-connection")}><Plus className="h-4 w-4 mr-2" />Add Connection</Button>}
               </div>
             ) : (
-              <div className="grid gap-3">
+              <div className="grid gap-3 no-ring">
                 {filteredConnections.map(conn => (
                   <div key={conn.id} className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 hover:border-accent-foreground/20 transition-colors">
                     <button onClick={() => handleConnectionSelect(conn)} className="flex items-center gap-4 min-w-0 flex-1 text-left">

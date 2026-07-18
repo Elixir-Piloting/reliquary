@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Electron reference (not part of Tauri app)
+electron-ref/
+docs/superpowers/

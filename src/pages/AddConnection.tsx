@@ -69,7 +69,7 @@ export default function AddConnectionPage() {
             <span className="text-sm text-muted-foreground">or</span>
             <Separator className="flex-1" />
           </div>
-          <Button variant="outline" className="w-full justify-start gap-3" onClick={() => navigate("/add-connection/postgresql?local=true")}>
+          <Button variant="outline" className="w-full justify-start gap-3" onClick={() => navigate("/add-connection/local")}>
             <Server className="h-4 w-4" />Continue with local PostgreSQL
           </Button>
         </div>

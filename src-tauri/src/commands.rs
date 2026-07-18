@@ -290,23 +290,19 @@ pub async fn execute_query(connection_id: String, query: String, state: tauri::S
 
 #[tauri::command]
 pub async fn detect_local_servers(_state: tauri::State<'_, AppState>) -> Result<Vec<LocalPgServer>, String> {
+    use tokio::net::TcpStream;
     let ports: Vec<u16> = (5432..=5435).collect();
     let mut servers = Vec::new();
     for port in ports {
         let key = format!("localhost:{}", port);
-        let conn_str = format!("host=localhost port={} dbname=postgres user=postgres connect_timeout=2", port);
-        match tokio::time::timeout(std::time::Duration::from_secs(3), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await {
-            Ok(Ok((client, connection))) => {
-                tokio::spawn(async move { drop(connection); });
-                let ver: Option<String> = client.query_one("SELECT version()", &[])
-                    .await.ok().and_then(|r| r.get::<_, Option<String>>(0));
-                drop(client);
+        match tokio::time::timeout(std::time::Duration::from_secs(2), TcpStream::connect(("localhost", port))).await {
+            Ok(Ok(_stream)) => {
                 servers.push(LocalPgServer {
                     key,
                     host: "localhost".into(),
                     port,
                     running: true,
-                    version: ver,
+                    version: None,
                 });
             }
             _ => {
@@ -317,9 +313,17 @@ pub async fn detect_local_servers(_state: tauri::State<'_, AppState>) -> Result<
     Ok(servers)
 }
 
+fn local_pg_conn_str(host: &str, port: u16, user: Option<String>, password: Option<String>) -> String {
+    let user = user.unwrap_or_else(|| "postgres".to_string());
+    match password {
+        Some(p) if !p.is_empty() => format!("host={host} port={port} dbname=postgres user={user} password={p} connect_timeout=5"),
+        _ => format!("host={host} port={port} dbname=postgres user={user} connect_timeout=5"),
+    }
+}
+
 #[tauri::command]
-pub async fn list_local_databases(host: String, port: u16, _state: tauri::State<'_, AppState>) -> Result<Vec<LocalPgDatabase>, String> {
-    let conn_str = format!("host={} port={} dbname=postgres user=postgres connect_timeout=5", host, port);
+pub async fn list_local_databases(host: String, port: u16, user: Option<String>, password: Option<String>, _state: tauri::State<'_, AppState>) -> Result<Vec<LocalPgDatabase>, String> {
+    let conn_str = local_pg_conn_str(&host, port, user, password);
     let (client, connection) = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await
         .map_err(|_| "Timed out (5s)".to_string())?
         .map_err(|e| format!("connect: {}", e))?;
@@ -339,8 +343,8 @@ pub async fn list_local_databases(host: String, port: u16, _state: tauri::State<
 }
 
 #[tauri::command]
-pub async fn create_local_database(host: String, port: u16, db_name: String, _state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let conn_str = format!("host={} port={} dbname=postgres user=postgres connect_timeout=5", host, port);
+pub async fn create_local_database(host: String, port: u16, db_name: String, user: Option<String>, password: Option<String>, _state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let conn_str = local_pg_conn_str(&host, port, user, password);
     let (client, connection) = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await
         .map_err(|_| "Timed out (5s)".to_string())?
         .map_err(|e| format!("connect: {}", e))?;
@@ -354,8 +358,8 @@ pub async fn create_local_database(host: String, port: u16, db_name: String, _st
 }
 
 #[tauri::command]
-pub async fn drop_local_database(host: String, port: u16, db_name: String, _state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let conn_str = format!("host={} port={} dbname=postgres user=postgres connect_timeout=5", host, port);
+pub async fn drop_local_database(host: String, port: u16, db_name: String, user: Option<String>, password: Option<String>, _state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let conn_str = local_pg_conn_str(&host, port, user, password);
     let (client, connection) = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await
         .map_err(|_| "Timed out (5s)".to_string())?
         .map_err(|e| format!("connect: {}", e))?;

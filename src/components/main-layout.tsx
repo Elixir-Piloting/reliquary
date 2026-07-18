@@ -4,15 +4,16 @@ import { useNavigate } from "react-router-dom";
 import { SchemaExplorer } from "@/components/schema-explorer";
 import { SidebarProvider, useSidebar } from "@/components/sidebar-context";
 import { cn } from "@/lib/utils";
+import { getSubtleBackground } from "@/lib/utils/color";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Breadcrumbs } from "@/components/breadcrumbs";
-import { getConnections, getConnection } from "@/lib/connections/store";
+import { getConnections } from "@/lib/connections/store";
 import { getProviderMetadata } from "@/lib/db/providers";
 import { buildConnectionURL } from "@/lib/connections/url-parser";
 import type { ConnectionConfig } from "@/lib/db/types";
-import { ChevronDown, Home, Settings, Plus, Loader2 } from "lucide-react";
+import { ChevronDown, Home, Settings, Plus, Loader2, Pencil } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -20,8 +21,8 @@ function ProviderIcon({ provider }: { provider: string }) {
   const meta = getProviderMetadata(provider as any);
   if (!meta) return <div className="w-4 h-4 rounded-sm bg-muted" />;
   return (
-    <div className="relative w-4 h-4 shrink-0 rounded-sm flex items-center justify-center" style={{ backgroundColor: meta.color + "20" }}>
-      <span className="text-[8px] font-bold" style={{ color: meta.color }}>{meta.name.charAt(0)}</span>
+    <div className="relative w-4 h-4 shrink-0 rounded-sm flex items-center justify-center" style={{ backgroundColor: getSubtleBackground(meta.color, 1.0) }}>
+      <span className="text-[8px] font-bold" style={{ color: meta.color === "#FFFFFF" || meta.color === "#000000" ? "#1d1d1f" : "#fff" }}>{meta.name.charAt(0)}</span>
     </div>
   );
 }
@@ -34,7 +35,6 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const [connecting, setConnecting] = useState(false);
 
   const connections = getConnections();
-  const activeId = currentConnection?.id;
 
   useEffect(() => {
     if (connections.length > 0 && !currentConnection) {
@@ -88,12 +88,18 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
             <PopoverContent className="w-[200px] p-0" align="start">
               <div className="max-h-[200px] overflow-y-auto">
                 {connections.map(conn => (
-                  <button key={conn.id} onClick={() => handleConnectionSelect(conn)} disabled={connecting}
-                    className={cn("w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground", currentConnection?.id === conn.id && "bg-accent text-accent-foreground")}>
-                    <ProviderIcon provider={conn.provider} />
-                    <span className="truncate">{conn.name}</span>
-                    {connecting && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
-                  </button>
+                  <div key={conn.id} className={cn("w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors group hover:bg-accent hover:text-accent-foreground", currentConnection?.id === conn.id && "bg-accent text-accent-foreground")}>
+                    <button onClick={() => handleConnectionSelect(conn)} disabled={connecting}
+                      className="flex items-center gap-2 min-w-0 flex-1">
+                      <ProviderIcon provider={conn.provider} />
+                      <span className="truncate">{conn.name}</span>
+                      {connecting && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); navigate(`/add-connection/${conn.provider}?connectionId=${conn.id}`); setConnectionsPopoverOpen(false); }}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-accent-foreground/10 rounded transition-opacity">
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
                 ))}
                 {connections.length === 0 && <p className="px-3 py-3 text-sm text-muted-foreground text-center">No connections</p>}
               </div>
@@ -109,12 +115,15 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         <ScrollArea className="flex-1 p-4">
           <SchemaExplorer connectionId={currentConnection?.id} onTableSelect={handleTableSelect} />
         </ScrollArea>
-        <div className="p-2 shrink-0 border-t border-border">
+        <div className="p-2 shrink-0">
           <TooltipProvider>
             <div className="flex space-x-2">
               <Tooltip><TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" onClick={() => navigate("/")} className="h-8 w-8"><Home className="h-4 w-4" /></Button>
               </TooltipTrigger><TooltipContent side="right"><p>Home</p></TooltipContent></Tooltip>
+              <Tooltip><TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={() => navigate("/settings")} className="h-8 w-8"><Settings className="h-4 w-4" /></Button>
+              </TooltipTrigger><TooltipContent side="right"><p>Settings</p></TooltipContent></Tooltip>
             </div>
           </TooltipProvider>
         </div>

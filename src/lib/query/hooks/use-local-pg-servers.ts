@@ -2,12 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import API, { LocalPgDatabase, LocalPgServer } from "@/lib/ipc-client";
 import { queryKeys } from "../keys";
 
-export function useDetectLocalServers() {
-  return useMutation<LocalPgServer[], Error, void>({
-    mutationFn: () => API.detectLocalServers(),
-  });
-}
-
 export function useLocalServers() {
   return useQuery<LocalPgServer[]>({
     queryKey: queryKeys.localPg.servers,
@@ -16,19 +10,18 @@ export function useLocalServers() {
   });
 }
 
-export function useLocalDatabases(server: { host: string; port: number } | null) {
-  return useQuery<LocalPgDatabase[]>({
-    queryKey: queryKeys.localPg.databases(`${server?.host}:${server?.port}`),
-    queryFn: () => API.listLocalDatabases(server!.host, server!.port),
-    enabled: !!server,
+export function useLocalPgDatabases() {
+  return useMutation({
+    mutationFn: ({ host, port, user, password }: { host: string; port: number; user?: string; password?: string }) =>
+      API.listLocalDatabases(host, port, user, password),
   });
 }
 
 export function useCreateLocalDatabase() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ host, port, dbName }: { host: string; port: number; dbName: string }) =>
-      API.createLocalDatabase(host, port, dbName),
+    mutationFn: ({ host, port, dbName, user, password }: { host: string; port: number; dbName: string; user?: string; password?: string }) =>
+      API.createLocalDatabase(host, port, dbName, user, password),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: queryKeys.localPg.databases(`${vars.host}:${vars.port}`) });
     },
@@ -38,8 +31,8 @@ export function useCreateLocalDatabase() {
 export function useDropLocalDatabase() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ host, port, dbName }: { host: string; port: number; dbName: string }) =>
-      API.dropLocalDatabase(host, port, dbName),
+    mutationFn: ({ host, port, dbName, user, password }: { host: string; port: number; dbName: string; user?: string; password?: string }) =>
+      API.dropLocalDatabase(host, port, dbName, user, password),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: queryKeys.localPg.databases(`${vars.host}:${vars.port}`) });
     },
