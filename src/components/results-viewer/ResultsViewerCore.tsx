@@ -160,6 +160,7 @@ export function ResultsViewer({
   const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; col: string } | null>(null);
 
   const [enumCache, setEnumCache] = useState<Record<string, string[] | null>>({});
   const [enumLoading, setEnumLoading] = useState<Record<string, boolean>>({});
@@ -173,12 +174,12 @@ export function ResultsViewer({
   useEffect(() => { setLocalRows(null); }, [result]);
 
   useEffect(() => {
-    if (!editingCell) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      const td = (t as HTMLElement)?.closest('td');
-      if (td && td.querySelector('input, button')) return;
-      (document.activeElement as HTMLElement)?.blur();
+      const table = (t as HTMLElement)?.closest('table');
+      if (table) return;
+      if (editingCell) (document.activeElement as HTMLElement)?.blur();
+      setSelectedCell(null);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -319,8 +320,8 @@ export function ResultsViewer({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-auto pb-32">
-        <Table>
+      <div className="flex-1 overflow-auto">
+        <Table className="min-w-max">
           <TableHeader className="sticky top-0 bg-foreground/5 z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
             <TableRow>
               <TableHead className="w-16 pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]"><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
@@ -344,20 +345,21 @@ export function ResultsViewer({
               const actualIndex = (page - 1) * pageSize + rowIndex;
               const isSelected = selectedRows.has(actualIndex);
               return (
-                <TableRow key={actualIndex} data-state={isSelected ? "selected" : undefined}>
+                <TableRow key={actualIndex} className="hover:bg-transparent" data-state={isSelected ? "selected" : undefined}>
                   <TableCell className="pl-8 pr-8 border-r border-border"><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
                   {(displayResult.columns || []).map(field => {
                     const value = row[field.name]; const isNull = value === null;
                     const isEditing = editingCell?.rowIdx === actualIndex && editingCell?.col === field.name;
+                    const isSelectedCell = selectedCell?.rowIdx === actualIndex && selectedCell?.col === field.name;
                     const change = getChangeForCell(row, field.name);
                     const displayValue = change ? change.newValue : value;
                     const showNull = displayValue === null;
                     const inputType = getInputType(field.dataType);
                     const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
                     return (<TableCell key={field.name}
-                      className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500")}
+                      className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500")}
                       onDoubleClick={(e) => { e.stopPropagation(); handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
-                      onClick={() => copyCell(value)} title={showNull ? "NULL" : String(displayValue)}>
+                      onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); copyCell(value); }} title={showNull ? "NULL" : String(displayValue)}>
                       {isEditing ? (inputType === 'select-boolean' ? (
                         <InlineSelect
                           value={editValue} options={['true', 'false', '']} labels={['true', 'false', 'NULL']}

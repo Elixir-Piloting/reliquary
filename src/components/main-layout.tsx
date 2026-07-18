@@ -8,7 +8,7 @@ import { getSubtleBackground } from "@/lib/utils/color";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Breadcrumbs } from "@/components/breadcrumbs";
+
 import { getConnections } from "@/lib/connections/store";
 import { getProviderMetadata } from "@/lib/db/providers";
 import { buildConnectionURL } from "@/lib/connections/url-parser";
@@ -134,9 +134,6 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        <div className="h-10 border-b border-border flex items-center px-6 shrink-0 bg-muted/10">
-          <Breadcrumbs />
-        </div>
         {children}
       </div>
     </div>
