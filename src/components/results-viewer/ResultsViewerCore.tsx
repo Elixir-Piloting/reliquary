@@ -319,18 +319,18 @@ export function ResultsViewer({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-auto px-4 py-2 pb-32">
+      <div className="flex-1 overflow-auto pb-32">
         <Table>
-          <TableHeader className="sticky top-0 bg-card z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
+          <TableHeader className="sticky top-0 bg-foreground/5 z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
             <TableRow>
-              <TableHead className="w-10"><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
+              <TableHead className="w-16 pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]"><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
               {(displayResult.columns || []).map(field => (
-                <TableHead key={field.name} className="cursor-pointer select-none min-w-[140px] border-r border-border last:border-r-0" onClick={() => handleSort(field.name)}>
+                <TableHead key={field.name} className="cursor-pointer select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none" onClick={() => handleSort(field.name)}>
                   <div className="flex items-center gap-1"><span>{field.name}</span>{sortColumn === field.name && <span className="text-xs">{sortDirection === "asc" ? "↑" : "↓"}</span>}</div>
                 </TableHead>
               ))}
               {canEdit && onAddColumn && (
-                <TableHead className="min-w-[140px] text-left border-r border-border last:border-r-0">
+                <TableHead className="min-w-[140px] text-left shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none">
                   <button onClick={onAddColumn} title="Add new column (open editor)" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
                     <Plus className="h-3.5 w-3.5" />
                     <span className="text-xs">New Column</span>
@@ -345,7 +345,7 @@ export function ResultsViewer({
               const isSelected = selectedRows.has(actualIndex);
               return (
                 <TableRow key={actualIndex} data-state={isSelected ? "selected" : undefined}>
-                  <TableCell><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
+                  <TableCell className="pl-8 pr-8 border-r border-border"><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
                   {(displayResult.columns || []).map(field => {
                     const value = row[field.name]; const isNull = value === null;
                     const isEditing = editingCell?.rowIdx === actualIndex && editingCell?.col === field.name;

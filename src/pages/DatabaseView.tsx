@@ -27,7 +27,7 @@ function TableLoadingSkeleton() {
       </div>
       <div className="flex-1 overflow-hidden">
         <div className="h-full flex flex-col">
-          <div className="flex items-center gap-4 mx-6 mt-4">
+          <div className="flex items-center gap-4 mx-6">
             <Skeleton className="h-8 w-16" /><Skeleton className="h-8 w-20" /><Skeleton className="h-8 w-20" /><Skeleton className="h-8 w-28" />
           </div>
           <div className="flex-1 mt-4 overflow-auto px-6 pb-6">
@@ -225,7 +225,7 @@ export default function DatabaseView() {
                     <div id="review-changes-slot" />
                   </div>
                 </div>
-                <div className="flex-1 overflow-hidden px-6 pb-6 pt-4">
+                <div className="flex-1 overflow-hidden pb-6">
                   <ResultsViewer result={result} error={error} loading={loading}
                     schema={activeTab.schema} table={activeTab.table}
                     onRefresh={fetchData} provider={connection?.provider}
