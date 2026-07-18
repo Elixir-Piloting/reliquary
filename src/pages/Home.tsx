@@ -23,7 +23,12 @@ function ProviderIcon({ provider, className }: { provider: string; className?: s
   return (
     <div className={cn("relative w-5 h-5 shrink-0 rounded-sm flex items-center justify-center", className)}
       style={{ backgroundColor: getSubtleBackground(meta.color, 1.0) }}>
-      <span className="text-xs font-bold" style={{ color: meta.color === "#FFFFFF" || meta.color === "#000000" ? "#1d1d1f" : "#fff" }}>{meta.name.charAt(0)}</span>
+      {meta.iconType === "image" ? (
+        <img src={meta.icon} alt={meta.name} className="w-full h-full object-contain p-0.5"
+          onError={e => { const p = e.currentTarget.parentElement; if (p) p.innerHTML = `<span class="text-[8px] font-bold" style="color: ${meta.color === '#FFFFFF' || meta.color === '#000000' ? '#1d1d1f' : '#fff'}">${meta.name.charAt(0)}</span>`; }} />
+      ) : (
+        <span className="text-xs font-bold" style={{ color: meta.color === "#FFFFFF" || meta.color === "#000000" ? "#1d1d1f" : "#fff" }}>{meta.name.charAt(0)}</span>
+      )}
     </div>
   );
 }
