@@ -47,6 +47,8 @@
     --input: 240 5% 88%;
     --ring: 221 100% 50%;
     --radius: 0.625rem;
+    --table-header: 240 4% 97%;
+    --checkbox-w: 81px;
   }
 
   .dark {
@@ -69,6 +71,8 @@
     --border: 240 4% 18%;
     --input: 240 4% 18%;
     --ring: 221 100% 50%;
+    --table-header: 240 6% 6%;
+    --checkbox-w: 81px;
   }
 }
 
@@ -149,6 +153,7 @@
   .bg-destructive { background-color: hsl(var(--destructive)); }
   .text-destructive-foreground { color: hsl(var(--destructive-foreground)); }
   .border-input { border-color: hsl(var(--input)); }
+  .bg-table-header { background-color: hsl(var(--table-header)); }
   .ring-ring { --tw-ring-color: hsl(var(--ring)); }
   .no-ring { --tw-ring-opacity: 0 !important; }
 }

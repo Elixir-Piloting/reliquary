@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Check, Copy, X, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check, Copy, X, Loader2, Plus } from "lucide-react";
+import {
+  ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult, ResultsViewerProps, PendingChange } from "./types";
@@ -62,6 +65,26 @@ function getInputType(dataType: string): string {
   if (dt.includes('timestamp') || dt.includes('time')) return 'datetime-local';
   if (isPotentialEnum(dt)) return 'maybe-enum';
   return 'text';
+}
+
+function getSortOptions(dataType: string): { label: string; direction: 'asc' | 'desc' }[] {
+  const dt = dataType?.toLowerCase() || '';
+  if (dt === 'boolean' || dt === 'bool') return [
+    { label: 'False first', direction: 'asc' },
+    { label: 'True first', direction: 'desc' },
+  ];
+  if (dt.includes('date') || dt.includes('timestamp') || dt.includes('time')) return [
+    { label: 'Newest first', direction: 'desc' },
+    { label: 'Oldest first', direction: 'asc' },
+  ];
+  if (/^(int|float|numeric|decimal|serial|real|double|money)/.test(dt)) return [
+    { label: 'Smallest first', direction: 'asc' },
+    { label: 'Largest first', direction: 'desc' },
+  ];
+  return [
+    { label: 'A → Z', direction: 'asc' },
+    { label: 'Z → A', direction: 'desc' },
+  ];
 }
 
 function InlineSelect({ value, options, labels, onChange, onSave, onCancel }: {
@@ -161,6 +184,7 @@ export function ResultsViewer({
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; col: string } | null>(null);
+  const [sortDropdownCol, setSortDropdownCol] = useState<string | null>(null);
 
   const [enumCache, setEnumCache] = useState<Record<string, string[] | null>>({});
   const [enumLoading, setEnumLoading] = useState<Record<string, boolean>>({});
@@ -322,12 +346,48 @@ export function ResultsViewer({
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-auto">
         <Table className="min-w-max">
-          <TableHeader className="sticky top-0 bg-foreground/5 z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
-            <TableRow>
-              <TableHead className="w-16 pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]"><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
-              {(displayResult.columns || []).map(field => (
-                <TableHead key={field.name} className="cursor-pointer select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none" onClick={() => handleSort(field.name)}>
-                  <div className="flex items-center gap-1"><span>{field.name}</span>{sortColumn === field.name && <span className="text-xs">{sortDirection === "asc" ? "↑" : "↓"}</span>}</div>
+            <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
+            <TableRow className="hover:bg-muted/50">
+              <TableHead className="sticky left-0 z-30 bg-table-header pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
+              {(displayResult.columns || []).map((field, colIdx) => (
+                <TableHead key={field.name} className={cn("group select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none", field.name === 'id' && "sticky z-30 bg-table-header")} style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}>
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <div className="flex items-center justify-between w-full cursor-pointer" onClick={() => handleSort(field.name)}>
+                        <span className="text-xs font-medium">{field.name}</span>
+                        <div className="flex items-center gap-0.5">
+                          {sortColumn === field.name && <span className="text-xs font-medium tabular-nums">{sortDirection === "asc" ? "↑" : "↓"}</span>}
+                          <Popover open={sortDropdownCol === field.name} onOpenChange={(open) => setSortDropdownCol(open ? field.name : null)}>
+                            <PopoverTrigger asChild>
+                              <button onClick={(e) => e.stopPropagation()} className="opacity-0 group-hover:opacity-100 h-4 w-4 flex items-center justify-center rounded hover:bg-foreground/10 transition-opacity">
+                                <ChevronDown className="h-3 w-3" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-40 p-1" align="start" side="bottom">
+                              <div className="flex flex-col gap-0.5">
+                                {getSortOptions(field.dataType).map(opt => (
+                                  <button key={opt.direction} onClick={() => { setSortColumn(field.name); setSortDirection(opt.direction); setSortDropdownCol(null); }}
+                                    className={cn("flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors cursor-pointer", sortColumn === field.name && sortDirection === opt.direction && "bg-accent font-medium")}>
+                                    {opt.label}
+                                  </button>
+                                ))}
+                                {sortColumn === field.name && <><div className="border-t border-border my-0.5" /><button onClick={() => { setSortColumn(null); setSortDropdownCol(null); }} className="flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors text-muted-foreground cursor-pointer">Clear sort</button></>}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-40">
+                      {getSortOptions(field.dataType).map(opt => (
+                        <ContextMenuItem key={opt.direction} onSelect={() => { setSortColumn(field.name); setSortDirection(opt.direction); }}>
+                          <span className="flex-1">{opt.label}</span>
+                          {sortColumn === field.name && sortDirection === opt.direction && <Check className="h-3 w-3 ml-2 shrink-0" />}
+                        </ContextMenuItem>
+                      ))}
+                      {sortColumn === field.name && <><div className="border-t border-border mx-1 my-0.5" /><ContextMenuItem onSelect={() => setSortColumn(null)}><X className="h-3 w-3 mr-2" />Clear sort</ContextMenuItem></>}
+                    </ContextMenuContent>
+                  </ContextMenu>
                 </TableHead>
               ))}
               {canEdit && onAddColumn && (
@@ -346,8 +406,8 @@ export function ResultsViewer({
               const isSelected = selectedRows.has(actualIndex);
               return (
                 <TableRow key={actualIndex} className="hover:bg-transparent" data-state={isSelected ? "selected" : undefined}>
-                  <TableCell className="pl-8 pr-8 border-r border-border"><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
-                  {(displayResult.columns || []).map(field => {
+                  <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
+                  {(displayResult.columns || []).map((field, colIdx) => {
                     const value = row[field.name]; const isNull = value === null;
                     const isEditing = editingCell?.rowIdx === actualIndex && editingCell?.col === field.name;
                     const isSelectedCell = selectedCell?.rowIdx === actualIndex && selectedCell?.col === field.name;
@@ -357,7 +417,8 @@ export function ResultsViewer({
                     const inputType = getInputType(field.dataType);
                     const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
                     return (<TableCell key={field.name}
-                      className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500")}
+                      className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500")}
+                      style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
                       onDoubleClick={(e) => { e.stopPropagation(); handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
                       onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); copyCell(value); }} title={showNull ? "NULL" : String(displayValue)}>
                       {isEditing ? (inputType === 'select-boolean' ? (
