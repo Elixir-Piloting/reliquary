@@ -1,5 +1,15 @@
 use crate::types::*;
 use std::collections::HashMap;
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use postgres_native_tls::MakeTlsConnector;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_postgres::tls::{
+    ChannelBinding, MakeTlsConnect, NoTls, NoTlsError, NoTlsFuture, NoTlsStream, TlsConnect,
+};
+use tokio_postgres::Socket;
 use tokio_postgres::Client as PgClient;
 
 // ---------------------------------------------------------------------------
@@ -121,6 +131,200 @@ pub fn parse_pg_connstr(url: &str) -> Result<String, String> {
     s.push_str(&format!(" sslmode={}", parts.sslmode));
     s.push_str(" connect_timeout=5");
     Ok(s)
+}
+
+// ---------------------------------------------------------------------------
+// TLS connector selection
+// ---------------------------------------------------------------------------
+
+/// A concrete, `Clone`able TLS connector selected from a URL's `sslmode`.
+///
+/// `tokio_postgres::connect` needs a `MakeTlsConnect<Socket>`. `NoTls` and
+/// `postgres_native_tls::MakeTlsConnector` both implement it and are `Clone`,
+/// so we wrap them in an enum (a `Box<dyn MakeTlsConnect>` would not be
+/// `Clone`, which deadpool-postgres's `Manager` requires).
+#[derive(Clone)]
+pub enum PgTls {
+    None(NoTls),
+    Native(MakeTlsConnector),
+}
+
+/// Build the TLS connector implied by a URL's `sslmode`.
+///
+/// - `disable` -> no TLS (plain TCP).
+/// - `require`/`prefer` -> native TLS accepting any server certificate
+///   (including self-signed), mirroring tokio-postgres's "require does no
+///   certificate verification" semantics.
+/// - `verify-ca`/`verify-full` -> native TLS with certificate verification on
+///   (the OS trust store, SChannel on Windows).
+pub fn build_tls(sslmode: &str) -> Result<PgTls, String> {
+    match sslmode {
+        "disable" => Ok(PgTls::None(NoTls)),
+        "require" | "prefer" => {
+            let connector = native_tls::TlsConnector::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .map_err(|e| format!("Failed to build TLS connector: {}", e))?;
+            Ok(PgTls::Native(MakeTlsConnector::new(connector)))
+        }
+        "verify-ca" | "verify-full" => {
+            let connector = native_tls::TlsConnector::builder()
+                .build()
+                .map_err(|e| format!("Failed to build TLS connector: {}", e))?;
+            Ok(PgTls::Native(MakeTlsConnector::new(connector)))
+        }
+        other => Err(format!("Unsupported sslmode: {}", other)),
+    }
+}
+
+/// Error unifying `NoTls`'s and `native_tls`'s error types.
+#[derive(Debug)]
+pub enum PgTlsError {
+    None(NoTlsError),
+    Native(native_tls::Error),
+}
+
+impl std::fmt::Display for PgTlsError {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PgTlsError::None(e) => e.fmt(fmt),
+            PgTlsError::Native(e) => e.fmt(fmt),
+        }
+    }
+}
+
+impl std::error::Error for PgTlsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PgTlsError::None(e) => Some(e),
+            PgTlsError::Native(e) => Some(e),
+        }
+    }
+}
+
+impl From<NoTlsError> for PgTlsError {
+    fn from(e: NoTlsError) -> PgTlsError {
+        PgTlsError::None(e)
+    }
+}
+
+impl From<native_tls::Error> for PgTlsError {
+    fn from(e: native_tls::Error) -> PgTlsError {
+        PgTlsError::Native(e)
+    }
+}
+
+/// The TLS stream produced by `PgTls`, mirroring the inner connector's stream.
+pub enum PgTlsStream {
+    None(NoTlsStream),
+    Native(postgres_native_tls::TlsStream<Socket>),
+}
+
+impl AsyncRead for PgTlsStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            PgTlsStream::None(s) => Pin::new(s).poll_read(cx, buf),
+            PgTlsStream::Native(s) => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for PgTlsStream {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            PgTlsStream::None(s) => Pin::new(s).poll_write(cx, buf),
+            PgTlsStream::Native(s) => Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            PgTlsStream::None(s) => Pin::new(s).poll_flush(cx),
+            PgTlsStream::Native(s) => Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            PgTlsStream::None(s) => Pin::new(s).poll_shutdown(cx),
+            PgTlsStream::Native(s) => Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
+impl tokio_postgres::tls::TlsStream for PgTlsStream {
+    fn channel_binding(&self) -> ChannelBinding {
+        match self {
+            PgTlsStream::None(s) => s.channel_binding(),
+            PgTlsStream::Native(s) => s.channel_binding(),
+        }
+    }
+}
+
+/// A `TlsConnect` for the concrete variant produced by `PgTls`.
+pub enum PgTlsConnect {
+    None(NoTls),
+    Native(postgres_native_tls::TlsConnector),
+}
+
+/// The handshake future returned by `PgTlsConnect::connect`.
+pub enum PgTlsFuture {
+    None(NoTlsFuture),
+    Native(
+        Pin<Box<dyn Future<Output = Result<postgres_native_tls::TlsStream<Socket>, native_tls::Error>> + Send>>,
+    ),
+}
+
+impl Future for PgTlsFuture {
+    type Output = Result<PgTlsStream, PgTlsError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            PgTlsFuture::None(f) => Pin::new(f)
+                .poll(cx)
+                .map(|r| r.map(PgTlsStream::None).map_err(PgTlsError::None)),
+            PgTlsFuture::Native(f) => f
+                .as_mut()
+                .poll(cx)
+                .map(|r| r.map(PgTlsStream::Native).map_err(PgTlsError::Native)),
+        }
+    }
+}
+
+impl TlsConnect<Socket> for PgTlsConnect {
+    type Stream = PgTlsStream;
+    type Error = PgTlsError;
+    type Future = PgTlsFuture;
+
+    fn connect(self, stream: Socket) -> Self::Future {
+        match self {
+            PgTlsConnect::None(tls) => PgTlsFuture::None(tls.connect(stream)),
+            PgTlsConnect::Native(tls) => PgTlsFuture::Native(tls.connect(stream)),
+        }
+    }
+}
+
+impl MakeTlsConnect<Socket> for PgTls {
+    type Stream = PgTlsStream;
+    type TlsConnect = PgTlsConnect;
+    type Error = PgTlsError;
+
+    fn make_tls_connect(&mut self, domain: &str) -> Result<Self::TlsConnect, Self::Error> {
+        match self {
+            PgTls::None(tls) => {
+                let inner = MakeTlsConnect::<Socket>::make_tls_connect(tls, domain)?;
+                Ok(PgTlsConnect::None(inner))
+            }
+            PgTls::Native(tls) => {
+                let inner = MakeTlsConnect::<Socket>::make_tls_connect(tls, domain)?;
+                Ok(PgTlsConnect::Native(inner))
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

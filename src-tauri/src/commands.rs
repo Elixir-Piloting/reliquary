@@ -57,8 +57,10 @@ pub async fn delete_connection(id: String, state: tauri::State<'_, AppState>) ->
 #[tauri::command]
 pub async fn test_connection(url: String, _state: tauri::State<'_, AppState>) -> Result<TestConnectionResult, String> {
     if url.to_lowercase().starts_with("postgresql://") || url.to_lowercase().starts_with("postgres://") {
+        let parts = pg::parse_pg_url(&url)?;
         let conn_str = pg::parse_pg_connstr(&url)?;
-        match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await {
+        let tls = pg::build_tls(&parts.sslmode)?;
+        match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tls)).await {
             Ok(Ok((client, connection))) => {
                 tokio::spawn(async move { drop(connection); });
                 let ver = client.query_one("SELECT version()", &[]).await
@@ -83,8 +85,10 @@ pub async fn connect(connection_id: String, url: String, state: tauri::State<'_,
         }
     }
 
+    let parts = pg::parse_pg_url(&url)?;
     let conn_str = pg::parse_pg_connstr(&url)?;
-    match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await {
+    let tls = pg::build_tls(&parts.sslmode)?;
+    match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tls)).await {
         Ok(Ok((client, connection))) => {
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
