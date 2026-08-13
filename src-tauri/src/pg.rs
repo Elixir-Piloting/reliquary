@@ -11,7 +11,7 @@ use tokio_postgres::tls::{
 };
 use tokio_postgres::Socket;
 use tokio_postgres::Client as PgClient;
-use tokio_postgres::types::ToSql;
+use tokio_postgres::types::{FromSql, ToSql, Type};
 
 // ---------------------------------------------------------------------------
 // Parse connection URL -> conn string parts
@@ -568,10 +568,10 @@ pub fn pg_value(row: &tokio_postgres::Row, i: usize) -> serde_json::Value {
         "float4" => row.try_get::<_, Option<f32>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
         "float8" => row.try_get::<_, Option<f64>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
         "bool" => row.try_get::<_, Option<bool>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
-        "numeric" => row.try_get::<_, Option<Vec<u8>>>(i).ok().flatten()
-            .and_then(|b| numeric_bytes_to_string(&b).ok())
-            .map(serde_json::Value::String)
-            .unwrap_or(serde_json::Value::Null),
+        "numeric" => match row.try_get::<_, Option<RawBytes>>(i) {
+            Ok(Some(raw)) => numeric_bytes_to_string(&raw.0).map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
+            _ => serde_json::Value::Null,
+        },
         "json" | "jsonb" => row.try_get::<_, Option<serde_json::Value>>(i).ok().flatten().unwrap_or(serde_json::Value::Null),
         "bytea" => match row.try_get::<_, Option<Vec<u8>>>(i) {
             Ok(Some(bytes)) => serde_json::Value::String(format!("\\x{}", bytes_to_hex(&bytes))),
@@ -620,12 +620,30 @@ fn pg_array_value(row: &tokio_postgres::Row, i: usize, type_name: &str) -> serde
         "bytea" => row.try_get::<_, Option<Vec<Option<Vec<u8>>>>>(i).ok().flatten()
             .map(|v| collect(v.into_iter().map(|x| x.map(|b| serde_json::Value::String(format!("\\x{}", bytes_to_hex(&b))))).collect()))
             .unwrap_or(serde_json::Value::Null),
-        "numeric" => row.try_get::<_, Option<Vec<Option<Vec<u8>>>>>(i).ok().flatten()
-            .map(|v| collect(v.into_iter().map(|x| x.and_then(|b| numeric_bytes_to_string(&b).ok()).map(serde_json::Value::String)).collect()))
+        "numeric" => row.try_get::<_, Option<Vec<Option<RawBytes>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.and_then(|raw| numeric_bytes_to_string(&raw.0).ok()).map(serde_json::Value::String)).collect()))
             .unwrap_or(serde_json::Value::Null),
         _ => row.try_get::<_, Option<Vec<Option<String>>>>(i).ok().flatten()
             .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::String)).collect()))
             .unwrap_or(serde_json::Value::Null),
+    }
+}
+
+/// Raw bytes of any column value, decoded via `FromSql` regardless of type OID.
+///
+/// tokio-postgres gates `FromSql` by `T::accepts(ty)` *before* calling
+/// `from_sql` (`Row::get_inner`), so `Vec<u8>` — which only accepts `BYTEA` —
+/// cannot be used to read a `NUMERIC` column. This wrapper accepts every type
+/// and returns the raw binary wire bytes, which `numeric_bytes_to_string`
+/// then decodes.
+struct RawBytes(Vec<u8>);
+
+impl<'a> FromSql<'a> for RawBytes {
+    fn from_sql(_ty: &Type, raw: &'a [u8]) -> Result<RawBytes, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(RawBytes(raw.to_vec()))
+    }
+    fn accepts(_ty: &Type) -> bool {
+        true
     }
 }
 
@@ -881,4 +899,22 @@ pub async fn pg_get_enum_values(client: &PgClient, type_name: &str) -> Result<Ve
         .await
         .map_err(|e| format!("enum query: {}", e))?;
     Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_bytes_accepts_numeric_oid() {
+        assert!(RawBytes::accepts(&Type::NUMERIC));
+    }
+
+    #[test]
+    fn raw_bytes_round_trips_raw_binary() {
+        let wire = [0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+        let raw = RawBytes::from_sql(&Type::NUMERIC, &wire).unwrap();
+        assert_eq!(raw.0, wire);
+        assert_eq!(numeric_bytes_to_string(&raw.0).unwrap(), "1");
+    }
 }
