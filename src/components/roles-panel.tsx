@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,15 +21,19 @@ export function RolesPanel({ connectionId }: RolesPanelProps) {
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
-    if (next) {
-      setLoading(true);
-      setError(null);
-      API.getRoles(connectionId)
-        .then(data => setRoles(data))
-        .catch(e => setError(String(e)))
-        .finally(() => setLoading(false));
-    }
   };
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    API.getRoles(connectionId)
+      .then(data => { if (!cancelled) setRoles(data); })
+      .catch(e => { if (!cancelled) setError(String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, connectionId]);
 
   return (
     <>

@@ -41,41 +41,47 @@ export function NeonBranchSwitcher({ connectionId, readOnly }: NeonBranchSwitche
   const [switchingBranchId, setSwitchingBranchId] = useState<string | null>(null);
   const [connectionUrl, setConnectionUrl] = useState<string>("");
 
-  const loadKeyAndUrl = useCallback(async () => {
+  const loadKeyAndUrl = useCallback(async (isCancelled?: () => boolean) => {
+    const alive = () => !isCancelled?.();
     setKeyLoading(true);
     try {
       const list = await API.listConnections();
       const conn = list.find((c: Connection) => c.id === connectionId);
-      setApiKey(conn?.neonApiKey ?? null);
-      setConnectionUrl(conn?.url ?? "");
+      if (alive()) setApiKey(conn?.neonApiKey ?? null);
+      if (alive()) setConnectionUrl(conn?.url ?? "");
     } catch {
-      setApiKey(null);
+      if (alive()) setApiKey(null);
     }
-    setKeyLoading(false);
+    if (alive()) setKeyLoading(false);
   }, [connectionId]);
 
-  const loadBranches = useCallback(async (key: string) => {
+  const loadBranches = useCallback(async (key: string, isCancelled?: () => boolean) => {
+    const alive = () => !isCancelled?.();
     setBranchesLoading(true);
     setBranchesError(null);
     try {
       const result = await API.listNeonBranches(connectionId, key);
-      setBranches(result);
+      if (alive()) setBranches(result);
     } catch (e) {
-      setBranchesError(String(e));
-      setBranches(null);
+      if (alive()) { setBranchesError(String(e)); setBranches(null); }
     }
-    setBranchesLoading(false);
+    if (alive()) setBranchesLoading(false);
   }, [connectionId]);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     setBranches(null);
     setBranchesError(null);
-    loadKeyAndUrl();
+    loadKeyAndUrl(() => cancelled);
+    return () => { cancelled = true; };
   }, [open, loadKeyAndUrl]);
 
   useEffect(() => {
-    if (open && apiKey) loadBranches(apiKey);
+    if (!open || !apiKey) return;
+    let cancelled = false;
+    loadBranches(apiKey, () => cancelled);
+    return () => { cancelled = true; };
   }, [open, apiKey, loadBranches]);
 
   const handleSaveKey = async () => {
