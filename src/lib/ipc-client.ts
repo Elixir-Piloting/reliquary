@@ -187,10 +187,10 @@ const API = {
   async listConnections(): Promise<Connection[]> {
     return invoke("list_connections");
   },
-  async addConnection(config: { name: string; url: string }): Promise<Connection> {
+  async addConnection(config: { name: string; url: string; readOnly?: boolean }): Promise<Connection> {
     return invoke("add_connection", { name: config.name, url: config.url, readOnly: config.readOnly ?? false });
   },
-  async updateConnection(id: string, updates: { name?: string; url?: string }): Promise<void> {
+  async updateConnection(id: string, updates: { name?: string; url?: string; readOnly?: boolean }): Promise<void> {
     return invoke("update_connection", { id, name: updates.name, url: updates.url, readOnly: updates.readOnly });
   },
   async deleteConnection(id: string): Promise<void> {
