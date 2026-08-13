@@ -105,9 +105,9 @@ function collectReferencedTables(model: editor.ITextModel): { schema: string; ta
   TABLE_REF_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = TABLE_REF_RE.exec(text)) !== null) {
-    const schema = m[2];
-    const table = m[1];
-    refs.push(schema ? { schema, table } : { schema: "", table });
+    const table = m[2];
+    const schema = m[1];
+    refs.push(table ? { schema, table } : { schema: "", table: schema });
   }
   return refs;
 }
