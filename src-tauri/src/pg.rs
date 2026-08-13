@@ -394,24 +394,31 @@ pub async fn pg_get_tables(client: &PgClient, schema: &str) -> Result<Vec<TableI
     }).collect())
 }
 
+/// Column list for one table. `data_type` strips the type-modifier suffix
+/// (`character varying(255)` -> `character varying`) so the frontend's exact
+/// membership match against bare built-in type names keeps working. PK via
+/// `pg_index.indisprimary`; `max_length` is only meaningful for char/varchar
+/// (OIDs 18 bpchar, 1042 bpchar, 1043 varchar).
+const COLUMN_LIST_SQL: &str =
+    "SELECT a.attname AS column_name, \
+            CASE WHEN position('(' in format_type(a.atttypid, a.atttypmod)) > 0 \
+                 THEN left(format_type(a.atttypid, a.atttypmod), position('(' in format_type(a.atttypid, a.atttypmod)) - 1) \
+                 ELSE format_type(a.atttypid, a.atttypmod) END AS data_type, \
+            NOT a.attnotnull AS is_nullable, \
+            COALESCE((SELECT true FROM pg_index i \
+                      WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)), false) AS is_primary_key, \
+            pg_get_expr(d.adbin, d.adrelid) AS default_value, \
+            CASE WHEN a.atttypid IN (18, 1042, 1043) AND a.atttypmod > 4 THEN a.atttypmod - 4 ELSE NULL END AS max_length \
+     FROM pg_attribute a \
+     LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+     WHERE a.attrelid = (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE c.relname = $2 AND n.nspname = $1) \
+       AND a.attnum > 0 AND NOT a.attisdropped \
+     ORDER BY a.attnum";
+
 pub async fn pg_get_columns(client: &PgClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let rows = client.query(
-        r#"SELECT
-            a.attname AS column_name,
-            format_type(a.atttypid, a.atttypmod) AS data_type,
-            NOT a.attnotnull AS is_nullable,
-            COALESCE((SELECT true FROM pg_index i
-                      WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)), false) AS is_primary_key,
-            pg_get_expr(d.adbin, d.adrelid) AS default_value,
-            CASE WHEN a.atttypmod > 4 THEN a.atttypmod - 4 ELSE NULL END AS max_length
-         FROM pg_attribute a
-         LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-         WHERE a.attrelid = (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                             WHERE c.relname = $2 AND n.nspname = $1)
-           AND a.attnum > 0 AND NOT a.attisdropped
-         ORDER BY a.attnum"#,
-        &[&schema, &table],
-    ).await.map_err(|e| format!("get_columns: {}", e))?;
+    let rows = client.query(COLUMN_LIST_SQL, &[&schema, &table])
+        .await.map_err(|e| format!("get_columns: {}", e))?;
     Ok(rows.iter().map(|r| ColumnInfo {
         column_name: r.get(0),
         data_type: r.get(1),
@@ -528,20 +535,31 @@ pub async fn pg_get_views(client: &PgClient, schema: &str) -> Result<Vec<ViewInf
     }).collect())
 }
 
+/// Trigger list for one table, joining `information_schema.triggers` (metadata)
+/// to `pg_trigger.tgenabled` (actual enable state — the info-schema view has no
+/// enable column). `tgenabled`: 'O'/'R'/'A' = enabled, 'D' = disabled.
+const TRIGGER_LIST_SQL: &str =
+    "SELECT t.trigger_name, \
+            t.event_manipulation, \
+            t.action_timing, \
+            t.action_statement, \
+            pt.tgenabled <> 'D' AS enabled \
+     FROM information_schema.triggers t \
+     JOIN pg_trigger pt ON pt.tgname = t.trigger_name \
+     JOIN pg_class c ON c.oid = pt.tgrelid \
+     JOIN pg_namespace n ON n.oid = c.relnamespace \
+     WHERE n.nspname = $1 AND c.relname = $2 \
+     ORDER BY t.trigger_name";
+
 pub async fn pg_get_triggers(client: &PgClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
-    let rows = client.query(
-        r#"SELECT trigger_name, event_manipulation, action_timing, action_statement, is_enabled
-           FROM information_schema.triggers
-           WHERE event_object_schema = $1 AND event_object_table = $2
-           ORDER BY trigger_name"#,
-        &[&schema, &table],
-    ).await.map_err(|e| format!("get_triggers: {}", e))?;
+    let rows = client.query(TRIGGER_LIST_SQL, &[&schema, &table])
+        .await.map_err(|e| format!("get_triggers: {}", e))?;
     Ok(rows.iter().map(|r| TriggerInfo {
         trigger_name: r.get(0),
         event_manipulation: r.get(1),
         action_timing: r.get(2),
         action_statement: r.get(3),
-        enabled: r.get::<_, String>(4) == "YES",
+        enabled: r.get(4),
     }).collect())
 }
 
@@ -553,25 +571,30 @@ fn volatility_label(volatility: &str) -> &'static str {
     }
 }
 
+/// Function list for one schema. `prokind = 'f'` keeps only real functions —
+/// procedures ('p') and aggregates ('a') have a NULL `pg_get_function_result`,
+/// which would otherwise panic a bare String read. `provolatile` is a char code
+/// ('i'/'s'/'v') mapped to a friendly label in `volatility_label`.
+const FUNCTION_LIST_SQL: &str =
+    "SELECT p.proname, \
+            pg_get_function_identity_arguments(p.oid), \
+            pg_get_function_result(p.oid), \
+            l.lanname, \
+            p.provolatile::text, \
+            p.prosecdef \
+     FROM pg_proc p \
+     JOIN pg_language l ON l.oid = p.prolang \
+     JOIN pg_namespace n ON n.oid = p.pronamespace \
+     WHERE n.nspname = $1 AND p.prokind = 'f' \
+     ORDER BY p.proname";
+
 pub async fn pg_get_functions(client: &PgClient, schema: &str) -> Result<Vec<FunctionInfo>, String> {
-    let rows = client.query(
-        r#"SELECT p.proname,
-                   pg_get_function_identity_arguments(p.oid),
-                   pg_get_function_result(p.oid),
-                   l.lanname,
-                   p.provolatile::text,
-                   p.prosecdef
-            FROM pg_proc p
-            JOIN pg_language l ON l.oid = p.prolang
-            JOIN pg_namespace n ON n.oid = p.pronamespace
-            WHERE n.nspname = $1
-            ORDER BY p.proname"#,
-        &[&schema],
-    ).await.map_err(|e| format!("get_functions: {}", e))?;
+    let rows = client.query(FUNCTION_LIST_SQL, &[&schema])
+        .await.map_err(|e| format!("get_functions: {}", e))?;
     Ok(rows.iter().map(|r| FunctionInfo {
         function_name: r.get(0),
         arguments: r.get(1),
-        return_type: r.get(2),
+        return_type: r.try_get::<_, Option<String>>(2).ok().flatten().unwrap_or_else(|| "unknown".into()),
         language: r.get(3),
         volatility: volatility_label(&r.get::<_, String>(4)).to_string(),
         security_definer: r.get(5),
@@ -1581,6 +1604,33 @@ mod tests {
         assert!(TABLE_LIST_SQL.contains("GREATEST(c.reltuples::bigint, 0)"), "must clamp reltuples estimate to 0");
         assert!(!TABLE_LIST_SQL.contains("query_one"), "no per-row count query (no N+1)");
         assert_eq!(TABLE_LIST_SQL.matches("FROM pg_class c").count(), 1, "single FROM");
+    }
+
+    #[test]
+    fn trigger_list_sql_uses_tgenabled_not_is_enabled() {
+        assert!(TRIGGER_LIST_SQL.contains("tgenabled"), "enable state comes from pg_trigger.tgenabled");
+        assert!(TRIGGER_LIST_SQL.contains("information_schema.triggers"), "metadata from the info-schema view");
+        assert!(!TRIGGER_LIST_SQL.contains("is_enabled"), "information_schema.triggers has no is_enabled column");
+        assert!(TRIGGER_LIST_SQL.contains("pg_trigger pt"), "joined to pg_trigger for tgenabled");
+        assert!(TRIGGER_LIST_SQL.contains("n.nspname = $1 AND c.relname = $2"), "schema/table filter via pg_class+pg_namespace");
+    }
+
+    #[test]
+    fn function_list_sql_only_lists_real_functions() {
+        assert!(FUNCTION_LIST_SQL.contains("prokind = 'f'"), "must exclude procedures/aggregates (NULL return_type)");
+        assert!(FUNCTION_LIST_SQL.contains("pg_get_function_result(p.oid)"), "return type from pg_get_function_result");
+        assert!(FUNCTION_LIST_SQL.contains("p.provolatile"), "volatility code exposed for labeling");
+        assert!(!FUNCTION_LIST_SQL.contains("is_enabled"), "no info-schema trigger column");
+    }
+
+    #[test]
+    fn column_list_sql_strips_modifiers_and_guards_max_length() {
+        assert!(COLUMN_LIST_SQL.contains("position('(' in format_type(a.atttypid, a.atttypmod))"),
+            "type modifier suffix is stripped so data_type is the bare built-in name");
+        assert!(COLUMN_LIST_SQL.contains("atttypid IN (18, 1042, 1043)"),
+            "max_length only computed for char/varchar/bpchar");
+        assert!(COLUMN_LIST_SQL.contains("i.indisprimary"), "PK via pg_index.indisprimary");
+        assert!(!COLUMN_LIST_SQL.contains("_pkey"), "no fragile LIKE '%_pkey' detection");
     }
 
     #[test]
