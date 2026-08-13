@@ -289,7 +289,7 @@ export function ResultsViewer({
           .map(([k, v]) => `"${k}" = ${escapeSqlValue(v)}`)
           .join(" AND ");
         const query = `UPDATE "${change.schema}"."${change.table}" SET "${change.columnName}" = ${escapeSqlValue(change.newValue)} WHERE ${whereClause}`;
-        await invoke("execute_query", { connectionId, query });
+        await invoke("execute_query", { connectionId, query, options: { confirmDestructive: true, readOnly: false } });
       } catch (e) { console.error("Apply failed:", e); }
     }
     setApplying(false);

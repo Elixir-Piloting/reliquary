@@ -56,7 +56,7 @@ export function CreateTableDialog({ open, onOpenChange, schema, connectionId, on
     const sql = buildCreateSQL();
     setCreating(true);
     try {
-      await invoke("execute_query", { connectionId, query: sql });
+      await invoke("execute_query", { connectionId, query: sql, options: { confirmDestructive: true, readOnly: false } });
       toast.success(`Table "${tableName}" created`);
       onOpenChange(false);
       setTableName("");

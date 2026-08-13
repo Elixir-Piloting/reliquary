@@ -41,6 +41,60 @@ pub struct TableInfo {
     pub schema_name: String,
     pub table_type: String,
     pub row_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_rls: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewInfo {
+    pub view_name: String,
+    pub definition: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerInfo {
+    pub trigger_name: String,
+    pub event_manipulation: String,
+    pub action_timing: String,
+    pub action_statement: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionInfo {
+    pub function_name: String,
+    pub arguments: String,
+    pub return_type: String,
+    pub language: String,
+    pub volatility: String,
+    pub security_definer: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RlsPolicyInfo {
+    pub policy_name: String,
+    pub command: String,
+    pub roles: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub using_expression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_expression: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleInfo {
+    pub role_name: String,
+    pub superuser: bool,
+    pub createdb: bool,
+    pub createrole: bool,
+    pub login: bool,
+    pub connection_limit: i32,
+    pub member_of: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

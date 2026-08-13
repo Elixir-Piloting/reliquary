@@ -356,46 +356,69 @@ pub async fn pg_get_schemas(client: &PgClient) -> Result<Vec<SchemaInfo>, String
     }).collect())
 }
 
-pub async fn pg_get_tables(client: &PgClient, schema: &str) -> Result<Vec<TableInfo>, String> {
-    let rows = client.query(
-        "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = $1 ORDER BY tablename",
-        &[&schema],
-    ).await.map_err(|e| format!("get_tables: {}", e))?;
-    let mut out = Vec::new();
-    for r in &rows {
-        let name: String = r.get(0);
-        let count: Option<i64> = client.query_one(
-            "SELECT reltuples::bigint AS cnt FROM pg_class WHERE relname = $1 AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $2)",
-            &[&name, &schema],
-        ).await.ok().and_then(|cr| cr.get::<_, Option<i64>>(0));
-        out.push(TableInfo { table_name: name, schema_name: schema.to_string(), table_type: "TABLE".into(), row_count: count });
+/// Single query for the table/view/materialized-view/partitioned-table list in a
+/// schema. `reltuples` is a planner estimate (fine for a count badge; the real
+/// `COUNT(*)` lives in `pg_get_table_data`). `relrowsecurity` marks RLS-enabled
+/// relations. One round trip — no per-row N+1.
+const TABLE_LIST_SQL: &str =
+    "SELECT c.relname AS table_name, \
+     n.nspname AS schema_name, \
+     c.relkind::text AS table_type, \
+     GREATEST(c.reltuples::bigint, 0) AS row_count, \
+     c.relrowsecurity AS has_rls \
+     FROM pg_class c \
+     JOIN pg_namespace n ON n.oid = c.relnamespace \
+     WHERE n.nspname = $1 \
+       AND c.relkind IN ('r','v','m','p') \
+     ORDER BY c.relname";
+
+fn relkind_label(relkind: &str) -> &'static str {
+    match relkind {
+        "r" => "TABLE",
+        "v" => "VIEW",
+        "m" => "MATERIALIZED VIEW",
+        "p" => "PARTITIONED TABLE",
+        _ => "TABLE",
     }
-    Ok(out)
+}
+
+pub async fn pg_get_tables(client: &PgClient, schema: &str) -> Result<Vec<TableInfo>, String> {
+    let rows = client.query(TABLE_LIST_SQL, &[&schema])
+        .await.map_err(|e| format!("get_tables: {}", e))?;
+    Ok(rows.iter().map(|r| TableInfo {
+        table_name: r.get(0),
+        schema_name: r.get(1),
+        table_type: relkind_label(&r.get::<_, String>(2)).to_string(),
+        row_count: r.get(3),
+        has_rls: Some(r.get(4)),
+    }).collect())
 }
 
 pub async fn pg_get_columns(client: &PgClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let rows = client.query(
         r#"SELECT
-            c.column_name, c.data_type, c.is_nullable, c.character_maximum_length,
-            COALESCE(c.column_default, '') AS default_value,
-            (SELECT COUNT(*) > 0 FROM information_schema.key_column_usage k
-             WHERE k.table_schema = c.table_schema AND k.table_name = c.table_name
-             AND k.column_name = c.column_name AND k.constraint_name LIKE '%_pkey') AS is_pk
-         FROM information_schema.columns c
-         WHERE c.table_schema = $1 AND c.table_name = $2
-         ORDER BY c.ordinal_position"#,
+            a.attname AS column_name,
+            format_type(a.atttypid, a.atttypmod) AS data_type,
+            NOT a.attnotnull AS is_nullable,
+            COALESCE((SELECT true FROM pg_index i
+                      WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)), false) AS is_primary_key,
+            pg_get_expr(d.adbin, d.adrelid) AS default_value,
+            CASE WHEN a.atttypmod > 4 THEN a.atttypmod - 4 ELSE NULL END AS max_length
+         FROM pg_attribute a
+         LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+         WHERE a.attrelid = (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                             WHERE c.relname = $2 AND n.nspname = $1)
+           AND a.attnum > 0 AND NOT a.attisdropped
+         ORDER BY a.attnum"#,
         &[&schema, &table],
     ).await.map_err(|e| format!("get_columns: {}", e))?;
     Ok(rows.iter().map(|r| ColumnInfo {
         column_name: r.get(0),
         data_type: r.get(1),
-        is_nullable: r.get::<_, String>(2) == "YES",
-        default_value: {
-            let v: String = r.get(4);
-            if v.is_empty() { None } else { Some(v) }
-        },
-        max_length: r.get(3),
-        is_primary_key: r.get::<_, bool>(5),
+        is_nullable: r.get(2),
+        is_primary_key: r.get(3),
+        default_value: r.get::<_, Option<String>>(4),
+        max_length: r.get(5),
     }).collect())
 }
 
@@ -486,6 +509,133 @@ pub async fn pg_get_relationships(client: &PgClient, schema: &str, table: &str) 
         target_table: r.get(5),
         target_column: r.get(6),
     }).collect())
+}
+
+pub async fn pg_get_views(client: &PgClient, schema: &str) -> Result<Vec<ViewInfo>, String> {
+    let rows = client.query(
+        r#"SELECT v.viewname AS view_name, pg_get_viewdef(c.oid, true) AS definition
+           FROM pg_views v
+           JOIN pg_class c
+             ON c.relname = v.viewname
+            AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = v.schemaname)
+           WHERE v.schemaname = $1
+           ORDER BY v.viewname"#,
+        &[&schema],
+    ).await.map_err(|e| format!("get_views: {}", e))?;
+    Ok(rows.iter().map(|r| ViewInfo {
+        view_name: r.get(0),
+        definition: r.get(1),
+    }).collect())
+}
+
+pub async fn pg_get_triggers(client: &PgClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+    let rows = client.query(
+        r#"SELECT trigger_name, event_manipulation, action_timing, action_statement, is_enabled
+           FROM information_schema.triggers
+           WHERE event_object_schema = $1 AND event_object_table = $2
+           ORDER BY trigger_name"#,
+        &[&schema, &table],
+    ).await.map_err(|e| format!("get_triggers: {}", e))?;
+    Ok(rows.iter().map(|r| TriggerInfo {
+        trigger_name: r.get(0),
+        event_manipulation: r.get(1),
+        action_timing: r.get(2),
+        action_statement: r.get(3),
+        enabled: r.get::<_, String>(4) == "YES",
+    }).collect())
+}
+
+fn volatility_label(volatility: &str) -> &'static str {
+    match volatility {
+        "i" => "IMMUTABLE",
+        "s" => "STABLE",
+        _ => "VOLATILE",
+    }
+}
+
+pub async fn pg_get_functions(client: &PgClient, schema: &str) -> Result<Vec<FunctionInfo>, String> {
+    let rows = client.query(
+        r#"SELECT p.proname,
+                   pg_get_function_identity_arguments(p.oid),
+                   pg_get_function_result(p.oid),
+                   l.lanname,
+                   p.provolatile::text,
+                   p.prosecdef
+            FROM pg_proc p
+            JOIN pg_language l ON l.oid = p.prolang
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = $1
+            ORDER BY p.proname"#,
+        &[&schema],
+    ).await.map_err(|e| format!("get_functions: {}", e))?;
+    Ok(rows.iter().map(|r| FunctionInfo {
+        function_name: r.get(0),
+        arguments: r.get(1),
+        return_type: r.get(2),
+        language: r.get(3),
+        volatility: volatility_label(&r.get::<_, String>(4)).to_string(),
+        security_definer: r.get(5),
+    }).collect())
+}
+
+pub async fn pg_get_rls_policies(client: &PgClient, schema: &str, table: &str) -> Result<Vec<RlsPolicyInfo>, String> {
+    let rows = client.query(
+        r#"SELECT policyname, cmd, roles, qual, with_check
+           FROM pg_policies
+           WHERE schemaname = $1 AND tablename = $2
+           ORDER BY policyname"#,
+        &[&schema, &table],
+    ).await.map_err(|e| format!("get_rls_policies: {}", e))?;
+    Ok(rows.iter().map(|r| RlsPolicyInfo {
+        policy_name: r.get(0),
+        command: r.get(1),
+        roles: r.get(2),
+        using_expression: r.get(3),
+        check_expression: r.get(4),
+    }).collect())
+}
+
+pub async fn pg_table_rls_status(client: &PgClient, schema: &str, table: &str) -> Result<bool, String> {
+    let row = client.query_one(
+        r#"SELECT c.relrowsecurity
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relname = $2 AND n.nspname = $1"#,
+        &[&schema, &table],
+    ).await.map_err(|e| format!("table_rls_status: {}", e))?;
+    Ok(row.get(0))
+}
+
+pub async fn pg_get_roles(client: &PgClient) -> Result<Vec<RoleInfo>, String> {
+    let rows = client.query(
+        "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolcanlogin, rolconnlimit FROM pg_roles ORDER BY rolname",
+        &[],
+    ).await.map_err(|e| format!("get_roles: {}", e))?;
+    let mut out: Vec<RoleInfo> = rows.iter().map(|r| RoleInfo {
+        role_name: r.get(0),
+        superuser: r.get(1),
+        createdb: r.get(2),
+        createrole: r.get(3),
+        login: r.get(4),
+        connection_limit: r.get(5),
+        member_of: Vec::new(),
+    }).collect();
+    let index: HashMap<String, usize> = out.iter().enumerate().map(|(i, r)| (r.role_name.clone(), i)).collect();
+    let mrows = client.query(
+        "SELECT roleid::regrole::text, member::regrole::text FROM pg_auth_members",
+        &[],
+    ).await.map_err(|e| format!("get_roles memberships: {}", e))?;
+    for r in &mrows {
+        if let (Ok(role), Ok(member)) = (r.try_get::<_, String>(0), r.try_get::<_, String>(1)) {
+            if let Some(&i) = index.get(&member) {
+                out[i].member_of.push(role);
+            }
+        }
+    }
+    for r in out.iter_mut() {
+        r.member_of.sort();
+    }
+    Ok(out)
 }
 
 pub async fn pg_get_table_data(client: &PgClient, schema: &str, table: &str, page: i64, page_size: i64, sort_col: Option<&str>, sort_dir: Option<&str>) -> Result<TableDataResult, String> {
@@ -1418,5 +1568,130 @@ mod tests {
         assert!(!is_destructive("with x as (select 1) select * from x"));
         assert!(!is_destructive("EXPLAIN (ANALYZE false) DELETE FROM t"));
         assert!(!is_destructive(""));
+    }
+
+    // ------------------------------------------------------------------
+    // pg_get_tables — batched single-query shape (DB-free structural test)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn table_list_sql_is_single_batched_query_with_rls() {
+        assert!(TABLE_LIST_SQL.contains("relrowsecurity"), "must expose RLS flag");
+        assert!(TABLE_LIST_SQL.contains("relkind IN ('r','v','m','p')"), "must list tables/views/materialized/partitioned");
+        assert!(TABLE_LIST_SQL.contains("GREATEST(c.reltuples::bigint, 0)"), "must clamp reltuples estimate to 0");
+        assert!(!TABLE_LIST_SQL.contains("query_one"), "no per-row count query (no N+1)");
+        assert_eq!(TABLE_LIST_SQL.matches("FROM pg_class c").count(), 1, "single FROM");
+    }
+
+    #[test]
+    fn relkind_labels_are_friendly() {
+        assert_eq!(relkind_label("r"), "TABLE");
+        assert_eq!(relkind_label("v"), "VIEW");
+        assert_eq!(relkind_label("m"), "MATERIALIZED VIEW");
+        assert_eq!(relkind_label("p"), "PARTITIONED TABLE");
+        assert_eq!(relkind_label("?"), "TABLE");
+        assert_eq!(volatility_label("i"), "IMMUTABLE");
+        assert_eq!(volatility_label("s"), "STABLE");
+        assert_eq!(volatility_label("v"), "VOLATILE");
+    }
+
+    // ------------------------------------------------------------------
+    // New introspection structs — serde round-trips + exact camelCase keys
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn view_info_serializes_camel_case() {
+        let v = ViewInfo { view_name: "v".into(), definition: "SELECT 1".into() };
+        let j = serde_json::to_value(&v).unwrap();
+        assert_eq!(j["viewName"], "v");
+        assert_eq!(j["definition"], "SELECT 1");
+    }
+
+    #[test]
+    fn trigger_info_serializes_camel_case() {
+        let t = TriggerInfo {
+            trigger_name: "trg".into(),
+            event_manipulation: "INSERT".into(),
+            action_timing: "BEFORE".into(),
+            action_statement: "EXECUTE FUNCTION f()".into(),
+            enabled: true,
+        };
+        let j = serde_json::to_value(&t).unwrap();
+        assert_eq!(j["triggerName"], "trg");
+        assert_eq!(j["eventManipulation"], "INSERT");
+        assert_eq!(j["actionTiming"], "BEFORE");
+        assert_eq!(j["actionStatement"], "EXECUTE FUNCTION f()");
+        assert_eq!(j["enabled"], true);
+    }
+
+    #[test]
+    fn function_info_serializes_camel_case() {
+        let f = FunctionInfo {
+            function_name: "fn".into(),
+            arguments: "a int".into(),
+            return_type: "integer".into(),
+            language: "plpgsql".into(),
+            volatility: "STABLE".into(),
+            security_definer: true,
+        };
+        let j = serde_json::to_value(&f).unwrap();
+        assert_eq!(j["functionName"], "fn");
+        assert_eq!(j["arguments"], "a int");
+        assert_eq!(j["returnType"], "integer");
+        assert_eq!(j["language"], "plpgsql");
+        assert_eq!(j["volatility"], "STABLE");
+        assert_eq!(j["securityDefiner"], true);
+    }
+
+    #[test]
+    fn rls_policy_info_serializes_camel_case_and_omits_nulls() {
+        let p = RlsPolicyInfo {
+            policy_name: "p1".into(),
+            command: "SELECT".into(),
+            roles: vec!["app".into()],
+            using_expression: None,
+            check_expression: Some("id > 0".into()),
+        };
+        let j = serde_json::to_value(&p).unwrap();
+        assert_eq!(j["policyName"], "p1");
+        assert_eq!(j["command"], "SELECT");
+        assert_eq!(j["roles"], serde_json::json!(["app"]));
+        assert!(j.get("usingExpression").is_none(), "null Option fields are omitted");
+        assert_eq!(j["checkExpression"], "id > 0");
+    }
+
+    #[test]
+    fn role_info_serializes_camel_case() {
+        let r = RoleInfo {
+            role_name: "app".into(),
+            superuser: false,
+            createdb: true,
+            createrole: false,
+            login: true,
+            connection_limit: -1,
+            member_of: vec!["owners".into()],
+        };
+        let j = serde_json::to_value(&r).unwrap();
+        assert_eq!(j["roleName"], "app");
+        assert_eq!(j["superuser"], false);
+        assert_eq!(j["createdb"], true);
+        assert_eq!(j["createrole"], false);
+        assert_eq!(j["login"], true);
+        assert_eq!(j["connectionLimit"], -1);
+        assert_eq!(j["memberOf"], serde_json::json!(["owners"]));
+    }
+
+    #[test]
+    fn table_info_serializes_with_has_rls_field() {
+        let t = TableInfo {
+            table_name: "t".into(),
+            schema_name: "public".into(),
+            table_type: "TABLE".into(),
+            row_count: Some(10),
+            has_rls: Some(true),
+        };
+        let j = serde_json::to_value(&t).unwrap();
+        assert_eq!(j["tableName"], "t");
+        assert_eq!(j["hasRls"], true);
     }
 }

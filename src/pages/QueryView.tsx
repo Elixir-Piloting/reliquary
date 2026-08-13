@@ -56,14 +56,21 @@ export default function QueryView() {
     setQueryTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, query: newQuery } : t));
   }, [activeTabId]);
 
-  const executeQuery = async (q?: string) => {
+  const executeQuery = async (q?: string, confirmed = false) => {
     const query = q || currentQuery;
     if (!query.trim() || !connectionId) return;
     setLoading(true);
     setError(null);
     setResult(null);
     try {
-      const res = await invoke<QueryResult>("execute_query", { connectionId, query });
+      const res = await invoke<QueryResult>("execute_query", {
+        connectionId,
+        query,
+        options: {
+          confirmDestructive: safeMode ? confirmed : true,
+          readOnly: false,
+        },
+      });
       setResult(res);
     } catch (e: any) {
       setError(String(e));
@@ -134,7 +141,7 @@ export default function QueryView() {
         </div>
       </div>
       <QueryConfirmationDialog open={showConfirmation} onOpenChange={setShowConfirmation} query={pendingQuery || ""}
-        onConfirm={() => { setShowConfirmation(false); executeQuery(pendingQuery!); setPendingQuery(null); }}
+        onConfirm={() => { setShowConfirmation(false); executeQuery(pendingQuery!, true); setPendingQuery(null); }}
         onCancel={() => { setShowConfirmation(false); setPendingQuery(null); }} />
     </MainLayout>
   );

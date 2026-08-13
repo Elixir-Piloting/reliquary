@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Persistence } from "@/lib/persistence";
+import API from "@/lib/ipc-client";
 import type { QueryResult, ColumnInfo } from "@/lib/db/types";
 import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -48,6 +49,7 @@ export default function DatabaseView() {
   const [tableTabs, setTableTabs] = useState<TableTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -136,22 +138,27 @@ export default function DatabaseView() {
     setLoading(true);
     setError(null);
     try {
-      const offset = (page - 1) * pageSize;
-      const result = await invoke<QueryResult>("execute_query", {
-        connectionId,
-        query: `SELECT * FROM "${activeTab.schema}"."${activeTab.table}" LIMIT ${pageSize} OFFSET ${offset}`,
+      const data = await API.getTableData(connectionId, activeTab.schema, activeTab.table, page, pageSize);
+      setResult({
+        columns: data.columns,
+        rows: data.rows,
+        rowCount: data.rows.length,
+        affectedRows: undefined,
+        isSelect: true,
+        executionTimeMs: 0,
       });
-      setResult(result);
+      setTotalCount(data.totalCount);
     } catch (e: any) {
       setError(String(e));
       setResult(null);
+      setTotalCount(0);
     }
     setLoading(false);
   }, [connectionId, activeTab, page, pageSize]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const totalPages = result?.rowCount ? Math.ceil(result.rowCount / pageSize) : 0;
+  const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 0;
   const schemaName = activeTab?.schema || (searchParams.get("newTable") || "public");
   const isEditorTab = activeTab?.type === "create" || activeTab?.type === "edit";
 
@@ -196,8 +203,8 @@ export default function DatabaseView() {
                             ))}
                           </PopoverContent>
                         </Popover>
-                        <span className={cn(result.rowCount >= 10000 && "text-yellow-500")}>
-                          {result.rowCount >= 10000 ? "10000+" : result.rowCount} rows
+                        <span className={cn(totalCount >= 10000 && "text-yellow-500")}>
+                          {totalCount >= 10000 ? "10000+" : totalCount} rows
                         </span>
                       </div>
                     )}

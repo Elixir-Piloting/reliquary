@@ -199,6 +199,48 @@ pub async fn get_relationships(connection_id: String, schema: String, table: Str
 }
 
 #[tauri::command]
+pub async fn get_views(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<ViewInfo>, String> {
+    let guard = state.connections.lock().await;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_get_views(&client, &schema).await
+}
+
+#[tauri::command]
+pub async fn get_triggers(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<TriggerInfo>, String> {
+    let guard = state.connections.lock().await;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_get_triggers(&client, &schema, &table).await
+}
+
+#[tauri::command]
+pub async fn get_functions(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<FunctionInfo>, String> {
+    let guard = state.connections.lock().await;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_get_functions(&client, &schema).await
+}
+
+#[tauri::command]
+pub async fn get_rls_policies(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<RlsPolicyInfo>, String> {
+    let guard = state.connections.lock().await;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_get_rls_policies(&client, &schema, &table).await
+}
+
+#[tauri::command]
+pub async fn get_roles(connection_id: String, state: tauri::State<'_, AppState>) -> Result<Vec<RoleInfo>, String> {
+    let guard = state.connections.lock().await;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_get_roles(&client).await
+}
+
+#[tauri::command]
+pub async fn table_rls_status(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let guard = state.connections.lock().await;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_table_rls_status(&client, &schema, &table).await
+}
+
+#[tauri::command]
 pub async fn get_table_data(
     connection_id: String,
     schema: String,
