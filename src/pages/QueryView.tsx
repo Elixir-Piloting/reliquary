@@ -13,6 +13,7 @@ import { ExplainViewer } from "@/components/explain-viewer";
 import { Button } from "@/components/ui/button";
 import { Persistence } from "@/lib/persistence";
 import API, { type ExplainResult } from "@/lib/ipc-client";
+import { isDestructiveQuery } from "@/lib/destructive-sql";
 import { useSchemas } from "@/lib/query/hooks/use-schemas";
 import type { QueryResult } from "@/lib/db/types";
 import { Play, Plus, Loader2, FlaskConical, X } from "lucide-react";
@@ -115,13 +116,10 @@ export default function QueryView() {
   };
 
   const handleExecute = () => {
-    if (safeMode) {
-      const trimmed = currentQuery.trim().toLowerCase();
-      if (trimmed.startsWith("drop") || trimmed.startsWith("delete") || trimmed.startsWith("truncate") || trimmed.startsWith("update") || trimmed.startsWith("alter")) {
-        setPendingQuery(currentQuery);
-        setShowConfirmation(true);
-        return;
-      }
+    if (safeMode && isDestructiveQuery(currentQuery)) {
+      setPendingQuery(currentQuery);
+      setShowConfirmation(true);
+      return;
     }
     executeQuery();
   };
