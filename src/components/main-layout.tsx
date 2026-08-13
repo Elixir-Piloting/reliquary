@@ -41,12 +41,6 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const connectMutation = useConnect();
 
   useEffect(() => {
-    if (connections.length > 0 && !currentConnection) {
-      setCurrentConnection(connections[0]);
-    }
-  }, [connections]);
-
-  useEffect(() => {
     setCurrentConnection(prev => {
       if (!prev) return connections[0] ?? null;
       return connections.find(c => c.id === prev.id) ?? connections[0] ?? null;

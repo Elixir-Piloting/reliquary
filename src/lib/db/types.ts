@@ -1,11 +1,4 @@
-import type { Connection, RowMutationStatement } from "@/lib/ipc-client";
-
-/**
- * A stored connection, mirroring the Rust `StoredConnection` (serde camelCase).
- * The IPC `Connection` type is the single canonical shape; this alias exists so
- * existing consumers keep the `ConnectionConfig` name.
- */
-export type ConnectionConfig = Connection;
+import type { RowMutationStatement } from "@/lib/ipc-client";
 
 export type { RowMutationStatement };
 

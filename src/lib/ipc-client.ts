@@ -149,7 +149,7 @@ export interface LocalPgDatabase {
 export interface TestConnectionResult {
   success: boolean;
   error?: string;
-  server_version?: string;
+  serverVersion?: string;
 }
 
 export interface ConnectionInfo {
