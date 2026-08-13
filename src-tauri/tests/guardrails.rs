@@ -1,4 +1,4 @@
-use relic_lib::{is_destructive, is_select_query, RowMutationStatement};
+use relic_lib::{explain_safe_to_run, is_ddl, is_destructive, is_select_query, RowMutationStatement};
 
 // ---------------------------------------------------------------------------
 // is_destructive — destructive-query detection (pure, DB-free)
@@ -122,6 +122,64 @@ fn insert_is_not_in_the_destructive_set() {
     // reindex}. INSERT is a mutation handled via the read-only / mutate_rows paths.
     assert!(!is_destructive("INSERT INTO t VALUES (1)"));
     assert!(!is_destructive("with x as (select 1) insert into t select * from x"));
+}
+
+#[test]
+fn select_into_is_destructive() {
+    // `SELECT ... INTO` is a DDL write that bypassed the first-keyword scanner.
+    assert!(is_destructive("SELECT * INTO t2 FROM t1"));
+    assert!(is_destructive("select * into t2 from t1"));
+    assert!(is_destructive("WITH x AS (SELECT 1) SELECT * INTO t2 FROM x"));
+    assert!(!is_destructive("select * from t"));
+    assert!(!is_destructive("SELECT 1"));
+    assert!(!is_destructive("select 'into' as x"));
+    assert!(!is_destructive("SELECT id, name FROM users"));
+}
+
+#[test]
+fn do_and_call_blocks_are_destructive() {
+    assert!(is_destructive("DO $$ BEGIN DROP TABLE x; END $$"));
+    assert!(is_destructive("DO $$ BEGIN RAISE NOTICE 'x'; END $$"));
+    assert!(is_destructive("CALL foo()"));
+    assert!(is_destructive("with x as (select 1) call foo()"));
+}
+
+#[test]
+fn ddl_detection_excludes_row_edits() {
+    assert!(is_ddl("DROP TABLE x"));
+    assert!(is_ddl("CREATE TABLE x()"));
+    assert!(is_ddl("ALTER TABLE t ADD c int"));
+    assert!(is_ddl("GRANT SELECT ON t TO r"));
+    assert!(is_ddl("TRUNCATE t"));
+    assert!(!is_ddl("UPDATE t SET a=1"));
+    assert!(!is_ddl("DELETE FROM t"));
+    assert!(!is_ddl("INSERT INTO t VALUES (1)"));
+    assert!(!is_ddl("SELECT 1"));
+}
+
+// ---------------------------------------------------------------------------
+// explain_safe_to_run — EXPLAIN gating predicate (pure, DB-free)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn explain_gating_allows_read_only_single_statements() {
+    assert!(explain_safe_to_run("EXPLAIN SELECT 1"));
+    assert!(explain_safe_to_run("SELECT * FROM t"));
+    assert!(explain_safe_to_run("SELECT 1"));
+}
+
+#[test]
+fn explain_gating_rejects_writes_and_multi_statement_inputs() {
+    // Multi-statement inputs execute the trailing statements raw under the
+    // simple-query protocol, so they must be rejected even though EXPLAIN only
+    // wraps the first statement.
+    assert!(!explain_safe_to_run("SELECT 1; DROP TABLE x"));
+    assert!(!explain_safe_to_run("SELECT 1; DELETE FROM x"));
+    assert!(!explain_safe_to_run("EXPLAIN ANALYZE DELETE FROM t"));
+    assert!(!explain_safe_to_run("DELETE FROM t"));
+    assert!(!explain_safe_to_run("UPDATE t SET a=1"));
+    assert!(!explain_safe_to_run("SELECT * INTO t2 FROM t1"));
+    assert!(!explain_safe_to_run("DO $$ BEGIN DROP TABLE x; END $$"));
 }
 
 // ---------------------------------------------------------------------------

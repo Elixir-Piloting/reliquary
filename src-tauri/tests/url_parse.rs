@@ -123,6 +123,37 @@ fn connstr_has_expected_shape() {
     );
 }
 
+#[test]
+fn connstr_quotes_password_with_space() {
+    // URL-encoded space in the password: the decoded value contains
+    // whitespace, which would otherwise break Config's key=value tokenizer.
+    let connstr = parse_pg_connstr(&url("user:p%20ss@host:5432/db")).unwrap();
+    assert!(connstr.contains("password='p ss'"), "got: {}", connstr);
+    connstr
+        .parse::<tokio_postgres::Config>()
+        .unwrap_or_else(|e| panic!("space password rejected by tokio-postgres Config: {} (connstr: {})", e, connstr));
+}
+
+#[test]
+fn connstr_quotes_password_with_embedded_quote() {
+    // Embedded quotes are backslash-escaped inside the quoted conn string value
+    // (the escaping scheme tokio-postgres's Config parser understands).
+    let connstr = parse_pg_connstr(&url("user:p%27x@host:5432/db")).unwrap();
+    assert!(connstr.contains("password='p\\'x'"), "got: {}", connstr);
+    connstr
+        .parse::<tokio_postgres::Config>()
+        .unwrap_or_else(|e| panic!("quoted password rejected by tokio-postgres Config: {} (connstr: {})", e, connstr));
+}
+
+#[test]
+fn connstr_quotes_password_with_equals() {
+    let connstr = parse_pg_connstr(&url("user:p%3Dss@host:5432/db")).unwrap();
+    assert!(connstr.contains("password='p=ss'"), "got: {}", connstr);
+    connstr
+        .parse::<tokio_postgres::Config>()
+        .unwrap_or_else(|e| panic!("'=' password rejected by tokio-postgres Config: {} (connstr: {})", e, connstr));
+}
+
 // ---------------------------------------------------------------------------
 // connstr sslmode normalization (tokio-postgres Config only accepts
 // disable/prefer/require; verify-* must be normalized to require)

@@ -122,16 +122,35 @@ pub fn urlencoding_or_raw(s: &str) -> String {
 
 pub fn parse_pg_connstr(url: &str) -> Result<String, String> {
     let parts = parse_pg_url(url)?;
-    let mut s = format!("host={} port={} dbname={}", parts.host, parts.port, parts.db);
+    let mut s = format!(
+        "host={} port={} dbname={}",
+        connstr_value(&parts.host),
+        connstr_value(&parts.port),
+        connstr_value(&parts.db)
+    );
     if !parts.user.is_empty() {
-        s.push_str(&format!(" user={}", parts.user));
+        s.push_str(&format!(" user={}", connstr_value(&parts.user)));
     }
     if !parts.password.is_empty() {
-        s.push_str(&format!(" password={}", parts.password));
+        s.push_str(&format!(" password={}", connstr_value(&parts.password)));
     }
     s.push_str(&format!(" sslmode={}", normalize_conn_sslmode(&parts.sslmode)));
     s.push_str(" connect_timeout=5");
     Ok(s)
+}
+
+/// Quote a conn string value the way `tokio_postgres::Config`'s parser
+/// expects: a value containing a quote, whitespace or `=` must be
+/// single-quoted, with embedded quotes and backslashes backslash-escaped.
+/// Unquoted values would otherwise break the `key=value` tokenizer (e.g. a
+/// URL-decoded password with a space).
+fn connstr_value(v: &str) -> String {
+    if v.contains('\'') || v.contains('=') || v.chars().any(|c| c.is_whitespace()) {
+        let escaped = v.replace('\\', "\\\\").replace('\'', "\\'");
+        format!("'{}'", escaped)
+    } else {
+        v.to_string()
+    }
 }
 
 /// Map a parsed sslmode to a value tokio-postgres's `Config` parser accepts.
@@ -953,7 +972,33 @@ fn is_destructive_keyword(kw: &str) -> bool {
             | "revoke"
             | "vacuum"
             | "reindex"
+            | "do"
+            | "call"
     )
+}
+
+/// DDL-only subset of the destructive set — `CREATE`/`DROP`/`ALTER`/`GRANT`/
+/// `REVOKE`/`TRUNCATE`/`VACUUM`/`REINDEX`. Notably *not* `UPDATE`/`DELETE`/
+/// `INSERT`, which `mutate_rows` legitimately runs as structured row edits.
+fn is_ddl_keyword(kw: &str) -> bool {
+    matches!(
+        kw,
+        "drop" | "create" | "alter" | "grant" | "revoke" | "truncate" | "vacuum" | "reindex"
+    )
+}
+
+/// True when `sql` contains any top-level statement whose (WITH-traversed)
+/// first keyword is DDL (see `is_ddl_keyword`). Used to keep schema-structural
+/// statements out of the grid-editing `mutate_rows` path.
+pub fn is_ddl(sql: &str) -> bool {
+    for stmt in top_level_statements(sql) {
+        let mut sc = SqlScanner::new(stmt);
+        match sc.read_statement_keyword() {
+            Some(kw) if is_ddl_keyword(&kw) => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Detect whether `sql` contains any statement whose (WITH-traversed) first
@@ -961,6 +1006,12 @@ fn is_destructive_keyword(kw: &str) -> bool {
 /// `;` outside string literals, quoted identifiers and comments), and an
 /// `EXPLAIN ANALYZE` of a destructive statement is itself treated as
 /// destructive because ANALYZE actually executes the query.
+///
+/// `DO`/`CALL` blocks and `SELECT ... INTO` (a DDL write) are treated as
+/// destructive too. Residual risk remains for side-effecting **volatile**
+/// functions called from a plain SELECT (e.g. `SELECT nextval('s')` or
+/// `SELECT my_mutating_fn()`); catching those needs a real parser, so these
+/// heuristics deliberately err toward destructive.
 pub fn is_destructive(sql: &str) -> bool {
     for stmt in top_level_statements(sql) {
         let mut sc = SqlScanner::new(stmt);
@@ -969,10 +1020,65 @@ pub fn is_destructive(sql: &str) -> bool {
             Some(kw) if kw == "explain" && explain_would_execute_destructive(&mut sc) => {
                 return true;
             }
+            Some(kw) if (kw == "select" || kw == "with") && select_into_detected(stmt) => {
+                return true;
+            }
             _ => {}
         }
     }
     false
+}
+
+/// `SELECT ... INTO` (e.g. `SELECT * INTO t2 FROM t1`) is a DDL write, so it
+/// is treated as destructive. Light heuristic: the (WITH-traversed) first
+/// keyword is SELECT, then a top-level `INTO` appears before `FROM` or the
+/// statement end. Anything ambiguous is resolved toward destructive.
+fn select_into_detected(stmt: &str) -> bool {
+    let mut sc = SqlScanner::new(stmt);
+    match sc.read_statement_keyword() {
+        Some(kw) if kw == "select" => {}
+        _ => return false,
+    }
+    let mut paren_depth: i32 = 0;
+    loop {
+        sc.skip_comments_ws();
+        match sc.peek() {
+            None | Some(b';') => return false,
+            Some(b'(') => {
+                paren_depth += 1;
+                sc.advance();
+            }
+            Some(b')') => {
+                paren_depth = (paren_depth - 1).max(0);
+                sc.advance();
+            }
+            Some(b'\'') | Some(b'"') | Some(b'$') => sc.skip_string_literal(),
+            Some(b'-') if sc.peek2() == Some(b'-') => sc.skip_line_comment(),
+            Some(b'/') if sc.peek2() == Some(b'*') => sc.skip_block_comment(),
+            Some(_) if sc.at_word_start() => {
+                let kw = sc.read_keyword().unwrap_or_default();
+                if kw == "from" {
+                    return false;
+                }
+                if kw == "into" && paren_depth == 0 {
+                    return true;
+                }
+            }
+            Some(_) => sc.advance(),
+        }
+    }
+}
+
+/// Whether `sql` is safe to hand to `EXPLAIN`: exactly one top-level statement
+/// that is a read-only SELECT/VALUES shape. Multi-statement strings are
+/// rejected because EXPLAIN only wraps the first statement while the
+/// simple-query protocol executes the rest raw.
+pub fn explain_safe_to_run(sql: &str) -> bool {
+    let stmts: Vec<&str> = top_level_statements(sql)
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    stmts.len() == 1 && !is_destructive(sql) && is_select_query(sql)
 }
 
 /// Split SQL into top-level statements on `;` that is not inside a string
@@ -1520,8 +1626,8 @@ pub async fn pg_mutate(client: &mut PgClient, statements: &[RowMutationStatement
 }
 
 pub async fn pg_explain(client: &PgClient, query: &str, analyze: bool) -> Result<ExplainResult, String> {
-    if analyze && (is_destructive(query) || !is_select_query(query)) {
-        return Err("EXPLAIN ANALYZE is only allowed on read-only (SELECT/VALUES) queries".into());
+    if !explain_safe_to_run(query) {
+        return Err("EXPLAIN is only allowed on read-only (SELECT/VALUES) queries".into());
     }
     let start = std::time::Instant::now();
     let explain_sql = format!(
