@@ -129,9 +129,12 @@ function registerCompletionProvider(monaco: any) {
       const currentWord = word.word;
 
       if (!connectionId || !getTables || !getColumns) {
-        for (const kw of SQL_KEYWORDS) suggestions.push({
-          label: kw, kind: monaco.languages.CompletionItemKind.Keyword, insertText: kw, range: wordRange, sortText: "0",
-        });
+        for (const kw of SQL_KEYWORDS) {
+          if (currentWord && !kw.toLowerCase().startsWith(currentWord.toLowerCase())) continue;
+          suggestions.push({
+            label: kw, kind: monaco.languages.CompletionItemKind.Keyword, insertText: kw, range: wordRange, sortText: "0",
+          });
+        }
         return { suggestions };
       }
 

@@ -75,6 +75,7 @@ export function ExplainViewer({ plan, executionTimeMs }: ExplainViewerProps) {
       <div className="flex-1 overflow-auto p-2 font-mono text-xs leading-relaxed">
         {entries.map((entry, i) => {
           const node = entry && typeof entry === "object" && "Plan" in entry ? (entry as { Plan: PlanNode }).Plan : entry as PlanNode;
+          if (!node || typeof node !== "object") return null;
           return <PlanNodeRow key={i} node={node} depth={0} />;
         })}
       </div>
