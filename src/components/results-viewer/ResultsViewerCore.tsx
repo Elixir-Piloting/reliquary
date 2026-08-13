@@ -18,7 +18,7 @@ import { PAGE_SIZE_OPTIONS } from "./types";
 import { ReviewChangesSheet } from "./review-changes-sheet";
 import { InsertRowDialog } from "./insert-row-dialog";
 import { ConfirmDialog } from "./confirm-dialog";
-import { getInputType, formatValueForInput, toSqlParamValue } from "./field-types";
+import { getInputType, formatValueForInput, toSqlParamValue, displayValueToString } from "./field-types";
 import { toCsv, toJson, downloadText } from "@/lib/export";
 import API, { type RowMutationStatement } from "@/lib/ipc-client";
 
@@ -184,7 +184,9 @@ export function ResultsViewer({
   }, [displayResult, sortColumn, sortDirection]);
 
   const insertRows = useMemo(
-    () => pendingChanges.filter(c => c.op === 'insert').map(c => c.newValue as Record<string, unknown>),
+    () => pendingChanges
+      .filter(c => c.op === 'insert')
+      .map(c => ({ id: c.id, values: { ...(c.newValue as Record<string, unknown>), __stagedInsert: true } as Record<string, unknown> })),
     [pendingChanges]
   );
 
@@ -219,7 +221,7 @@ export function ResultsViewer({
     else { setSortColumn(column); setSortDirection("asc"); }
   };
 
-  const copyCell = (value: any) => { navigator.clipboard.writeText(value === null ? "NULL" : String(value)); };
+  const copyCell = (value: any) => { navigator.clipboard.writeText(displayValueToString(value)); };
 
   const handleCellDoubleClick = (rowIdxInSorted: number, col: string, dataType: string, value: unknown) => {
     if (!canEdit) return;
@@ -371,19 +373,19 @@ export function ResultsViewer({
 
   if (loading) return <ResultsLoadingSkeleton />;
   if (error) return <div className="p-4 text-sm text-destructive bg-destructive/10 rounded-md"><div className="font-medium mb-1">Error</div><div className="font-mono text-xs">{error}</div></div>;
-  if (!displayResult || displayResult.rows.length === 0) return (
+  if (!displayResult) return (
     <div className="w-full border border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-md p-4">
       <div className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 shrink-0" />
-        <span>{displayResult?.rowCount === 0 ? "This table contains no rows" : "No results to display"}</span>
+        <span>No results to display</span>
       </div>
     </div>
   );
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const paginatedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
-  const rowsToShow = [...paginatedRows, ...insertRows];
   const startRow = (page - 1) * pageSize + 1;
   const endRow = Math.min(page * pageSize, sortedRows.length);
+  const hasRows = paginatedRows.length > 0 || insertRows.length > 0;
 
   const toggleAllSelect = (checked: boolean) => {
     if (checked) setSelectedRows(new Set(paginatedRows.map((_, i) => (page - 1) * pageSize + i)));
@@ -414,151 +416,180 @@ export function ResultsViewer({
           )}
         </div>
       </div>
-      <div className="flex-1 overflow-auto">
-        <Table className="min-w-max">
-            <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
-            <TableRow className="hover:bg-muted/50">
-              <TableHead className="sticky left-0 z-30 bg-table-header pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
-              {(displayResult.columns || []).map((field, colIdx) => (
-                <TableHead key={field.name} className={cn("group select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none", field.name === 'id' && "sticky z-30 bg-table-header")} style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}>
-                  <ContextMenu>
-                    <ContextMenuTrigger asChild>
-                      <div className="flex items-center justify-between w-full cursor-pointer" onClick={() => handleSort(field.name)}>
-                        <span className="text-xs font-medium">{field.name}</span>
-                        <div className="flex items-center gap-0.5">
-                          {sortColumn === field.name && <span className="text-xs font-medium tabular-nums">{sortDirection === "asc" ? "↑" : "↓"}</span>}
-                          <Popover open={sortDropdownCol === field.name} onOpenChange={(open) => setSortDropdownCol(open ? field.name : null)}>
-                            <PopoverTrigger asChild>
-                              <button onClick={(e) => e.stopPropagation()} className="opacity-0 group-hover:opacity-100 h-4 w-4 flex items-center justify-center rounded hover:bg-foreground/10 transition-opacity">
-                                <ChevronDown className="h-3 w-3" />
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-40 p-1" align="start" side="bottom">
-                              <div className="flex flex-col gap-0.5">
-                                {getSortOptions(field.dataType).map(opt => (
-                                  <button key={opt.direction} onClick={() => { setSortColumn(field.name); setSortDirection(opt.direction); setSortDropdownCol(null); }}
-                                    className={cn("flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors cursor-pointer", sortColumn === field.name && sortDirection === opt.direction && "bg-accent font-medium")}>
-                                    {opt.label}
+      {hasRows ? (
+        <>
+          <div className="flex-1 overflow-auto">
+            <Table className="min-w-max">
+                <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
+                <TableRow className="hover:bg-muted/50">
+                  <TableHead className="sticky left-0 z-30 bg-table-header pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
+                  {(displayResult.columns || []).map((field, colIdx) => (
+                    <TableHead key={field.name} className={cn("group select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none", field.name === 'id' && "sticky z-30 bg-table-header")} style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}>
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <div className="flex items-center justify-between w-full cursor-pointer" onClick={() => handleSort(field.name)}>
+                            <span className="text-xs font-medium">{field.name}</span>
+                            <div className="flex items-center gap-0.5">
+                              {sortColumn === field.name && <span className="text-xs font-medium tabular-nums">{sortDirection === "asc" ? "↑" : "↓"}</span>}
+                              <Popover open={sortDropdownCol === field.name} onOpenChange={(open) => setSortDropdownCol(open ? field.name : null)}>
+                                <PopoverTrigger asChild>
+                                  <button onClick={(e) => e.stopPropagation()} className="opacity-0 group-hover:opacity-100 h-4 w-4 flex items-center justify-center rounded hover:bg-foreground/10 transition-opacity">
+                                    <ChevronDown className="h-3 w-3" />
                                   </button>
-                                ))}
-                                {sortColumn === field.name && <><div className="border-t border-border my-0.5" /><button onClick={() => { setSortColumn(null); setSortDropdownCol(null); }} className="flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors text-muted-foreground cursor-pointer">Clear sort</button></>}
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                        </div>
-                      </div>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent className="w-40">
-                      {getSortOptions(field.dataType).map(opt => (
-                        <ContextMenuItem key={opt.direction} onSelect={() => { setSortColumn(field.name); setSortDirection(opt.direction); }}>
-                          <span className="flex-1">{opt.label}</span>
-                          {sortColumn === field.name && sortDirection === opt.direction && <Check className="h-3 w-3 ml-2 shrink-0" />}
-                        </ContextMenuItem>
-                      ))}
-                      {sortColumn === field.name && <><div className="border-t border-border mx-1 my-0.5" /><ContextMenuItem onSelect={() => setSortColumn(null)}><X className="h-3 w-3 mr-2" />Clear sort</ContextMenuItem></>}
-                    </ContextMenuContent>
-                  </ContextMenu>
-                </TableHead>
-              ))}
-              {canEdit && onAddColumn && (
-                <TableHead className="min-w-[140px] text-left shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none">
-                  <button onClick={onAddColumn} title="Add new column (open editor)" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
-                    <Plus className="h-3.5 w-3.5" />
-                    <span className="text-xs">New Column</span>
-                  </button>
-                </TableHead>
-              )}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rowsToShow.map((row, rowIndex) => {
-              const actualIndex = (page - 1) * pageSize + rowIndex;
-              const isStagedInsert = rowIndex >= paginatedRows.length;
-              const isSelected = selectedRows.has(actualIndex);
-              const pendingDelete = isPendingDelete(row);
-              return (
-                <TableRow key={`${isStagedInsert ? 'ins' : 'row'}-${actualIndex}`} className={cn("hover:bg-transparent", pendingDelete && "opacity-40", isStagedInsert && "bg-emerald-500/5")} data-state={isSelected ? "selected" : undefined}>
-                  <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
-                  {(displayResult.columns || []).map((field, colIdx) => {
-                    const value = row[field.name]; const isNull = value === null;
-                    const isEditing = editingCell?.rowIdx === actualIndex && editingCell?.col === field.name;
-                    const isSelectedCell = selectedCell?.rowIdx === actualIndex && selectedCell?.col === field.name;
-                    const change = getChangeForCell(row, field.name);
-                    const displayValue = change ? change.newValue : value;
-                    const showNull = displayValue === null;
-                    const inputType = getInputType(field.dataType);
-                    const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
-                    return (<TableCell key={field.name}
-                      className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
-                      style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
-                      onDoubleClick={(e) => { e.stopPropagation(); if (!pendingDelete) handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
-                      onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); copyCell(value); }} title={showNull ? "NULL" : String(displayValue)}>
-                      {isEditing ? (inputType === 'select-boolean' ? (
-                        <InlineSelect
-                          value={editValue} options={['true', 'false', '']} labels={['true', 'false', 'NULL']}
-                          onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
-                        />
-                      ) : enumVals && enumVals.length > 0 ? (
-                        <InlineSelect
-                          value={editValue} options={[...enumVals, '']}
-                          onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
-                        />
-                      ) : inputType === 'maybe-enum' && enumLoading[field.dataType] ? (
-                        <span className="text-muted-foreground italic">Loading...</span>
-                      ) : (
-                        <input
-                          type={inputType === 'maybe-enum' ? 'text' : inputType}
-                          value={editValue}
-                          onChange={e => setEditValue(e.target.value)}
-                          onBlur={() => handleSaveEdit(row)}
-                          onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit(row); if (e.key === 'Escape') handleCancelEdit(); }}
-                          autoFocus
-                          className="w-full bg-transparent border-0 outline-none focus:outline-none focus:ring-0 p-0 m-0 text-foreground text-xs"
-                        />
-                      )) : (
-                        <span>{showNull ? "NULL" : String(displayValue)}</span>
-                      )}
-                    </TableCell>);
-                  })}
-                  {canEdit && onAddColumn && <TableCell className="p-0" />}
+                                </PopoverTrigger>
+                                <PopoverContent className="w-40 p-1" align="start" side="bottom">
+                                  <div className="flex flex-col gap-0.5">
+                                    {getSortOptions(field.dataType).map(opt => (
+                                      <button key={opt.direction} onClick={() => { setSortColumn(field.name); setSortDirection(opt.direction); setSortDropdownCol(null); }}
+                                        className={cn("flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors cursor-pointer", sortColumn === field.name && sortDirection === opt.direction && "bg-accent font-medium")}>
+                                        {opt.label}
+                                      </button>
+                                    ))}
+                                    {sortColumn === field.name && <><div className="border-t border-border my-0.5" /><button onClick={() => { setSortColumn(null); setSortDropdownCol(null); }} className="flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors text-muted-foreground cursor-pointer">Clear sort</button></>}
+                                  </div>
+                                </PopoverContent>
+                              </Popover>
+                            </div>
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent className="w-40">
+                          {getSortOptions(field.dataType).map(opt => (
+                            <ContextMenuItem key={opt.direction} onSelect={() => { setSortColumn(field.name); setSortDirection(opt.direction); }}>
+                              <span className="flex-1">{opt.label}</span>
+                              {sortColumn === field.name && sortDirection === opt.direction && <Check className="h-3 w-3 ml-2 shrink-0" />}
+                            </ContextMenuItem>
+                          ))}
+                          {sortColumn === field.name && <><div className="border-t border-border mx-1 my-0.5" /><ContextMenuItem onSelect={() => setSortColumn(null)}><X className="h-3 w-3 mr-2" />Clear sort</ContextMenuItem></>}
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    </TableHead>
+                  ))}
+                  {canEdit && onAddColumn && (
+                    <TableHead className="min-w-[140px] text-left shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none">
+                      <button onClick={onAddColumn} title="Add new column (open editor)" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+                        <Plus className="h-3.5 w-3.5" />
+                        <span className="text-xs">New Column</span>
+                      </button>
+                    </TableHead>
+                  )}
                 </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
-      <div className="shrink-0 border-t border-border bg-card/80 backdrop-blur-sm px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <span>{sortedRows.length.toLocaleString()} rows</span>
-            <span className="text-border">·</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs">Rows per page</span>
-              <Popover open={pageSizePopoverOpen} onOpenChange={setPageSizePopoverOpen}>
-                <PopoverTrigger asChild><Button variant="outline" size="sm" className="h-7 px-2 text-xs font-medium min-w-[3.5rem]">{pageSize}</Button></PopoverTrigger>
-                <PopoverContent className="w-28 p-1" align="start">
-                  <div className="flex flex-col">{PAGE_SIZE_OPTIONS.map(size => (
-                    <button key={size} onClick={() => handlePageSizeChange(size)}
-                      className={cn("flex items-center justify-between rounded-sm px-2 py-1.5 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground", pageSize === size && "bg-accent text-accent-foreground font-medium")}>
-                      <span>{size}</span>{pageSize === size && <Check className="h-3.5 w-3.5" />}
-                    </button>
-                  ))}</div>
-                </PopoverContent>
-              </Popover>
+              </TableHeader>
+              <TableBody>
+                {paginatedRows.map((row, rowIndex) => {
+                  const actualIndex = (page - 1) * pageSize + rowIndex;
+                  const isSelected = selectedRows.has(actualIndex);
+                  const pendingDelete = isPendingDelete(row);
+                  return (
+                    <TableRow key={`row-${actualIndex}`} className={cn("hover:bg-transparent", pendingDelete && "opacity-40")} data-state={isSelected ? "selected" : undefined}>
+                      <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
+                      {(displayResult.columns || []).map((field, colIdx) => {
+                        const value = row[field.name]; const isNull = value === null;
+                        const isEditing = editingCell?.rowIdx === actualIndex && editingCell?.col === field.name;
+                        const isSelectedCell = selectedCell?.rowIdx === actualIndex && selectedCell?.col === field.name;
+                        const change = getChangeForCell(row, field.name);
+                        const displayValue = change ? change.newValue : value;
+                        const showNull = displayValue === null;
+                        const inputType = getInputType(field.dataType);
+                        const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
+                        return (<TableCell key={field.name}
+                          className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
+                          style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
+                          onDoubleClick={(e) => { e.stopPropagation(); if (!pendingDelete) handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
+                          onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); copyCell(value); }} title={showNull ? "NULL" : displayValueToString(displayValue)}>
+                          {isEditing ? (inputType === 'select-boolean' ? (
+                            <InlineSelect
+                              value={editValue} options={['true', 'false', '']} labels={['true', 'false', 'NULL']}
+                              onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
+                            />
+                          ) : enumVals && enumVals.length > 0 ? (
+                            <InlineSelect
+                              value={editValue} options={[...enumVals, '']}
+                              onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
+                            />
+                          ) : inputType === 'maybe-enum' && enumLoading[field.dataType] ? (
+                            <span className="text-muted-foreground italic">Loading...</span>
+                          ) : (
+                            <input
+                              type={inputType === 'maybe-enum' ? 'text' : inputType}
+                              value={editValue}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => handleSaveEdit(row)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit(row); if (e.key === 'Escape') handleCancelEdit(); }}
+                              autoFocus
+                              className="w-full bg-transparent border-0 outline-none focus:outline-none focus:ring-0 p-0 m-0 text-foreground text-xs"
+                            />
+                          )) : (
+                            <span>{showNull ? "NULL" : displayValueToString(displayValue)}</span>
+                          )}
+                        </TableCell>);
+                      })}
+                      {canEdit && onAddColumn && <TableCell className="p-0" />}
+                    </TableRow>
+                  );
+                })}
+                {canEdit && insertRows.map(({ id, values }) => (
+                  <TableRow key={`ins-${id}`} className="bg-emerald-500/5 hover:bg-transparent">
+                    <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}>
+                      <span className="inline-block h-4 w-4 rounded-sm border border-dashed border-emerald-500/50" aria-hidden />
+                    </TableCell>
+                    {(displayResult.columns || []).map(field => {
+                      const value = values[field.name];
+                      const showNull = value === null || value === undefined;
+                      return (
+                        <TableCell key={field.name}
+                          className={cn("min-w-[140px] max-w-[300px] truncate relative border-r border-border last:border-r-0", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic")}
+                          style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
+                          title={showNull ? "NULL" : displayValueToString(value)}>
+                          <span className="text-emerald-600/80">{showNull ? "NULL" : displayValueToString(value)}</span>
+                        </TableCell>
+                      );
+                    })}
+                    {canEdit && onAddColumn && <TableCell className="p-0" />}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="shrink-0 border-t border-border bg-card/80 backdrop-blur-sm px-4 py-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <span>{sortedRows.length.toLocaleString()} rows</span>
+                <span className="text-border">·</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs">Rows per page</span>
+                  <Popover open={pageSizePopoverOpen} onOpenChange={setPageSizePopoverOpen}>
+                    <PopoverTrigger asChild><Button variant="outline" size="sm" className="h-7 px-2 text-xs font-medium min-w-[3.5rem]">{pageSize}</Button></PopoverTrigger>
+                    <PopoverContent className="w-28 p-1" align="start">
+                      <div className="flex flex-col">{PAGE_SIZE_OPTIONS.map(size => (
+                        <button key={size} onClick={() => handlePageSizeChange(size)}
+                          className={cn("flex items-center justify-between rounded-sm px-2 py-1.5 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground", pageSize === size && "bg-accent text-accent-foreground font-medium")}>
+                          <span>{size}</span>{pageSize === size && <Check className="h-3.5 w-3.5" />}
+                        </button>
+                      ))}</div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground tabular-nums">{startRow}–{endRow} of {sortedRows.length.toLocaleString()}</span>
+                <span className="text-sm text-muted-foreground">({page}/{totalPages})</span>
+                <div className="flex items-center gap-0.5 ml-1">
+                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(1)} disabled={page <= 1}><ChevronsLeft className="h-3.5 w-3.5" /></Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}><ChevronLeft className="h-3.5 w-3.5" /></Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages}><ChevronRight className="h-3.5 w-3.5" /></Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(totalPages)} disabled={page >= totalPages}><ChevronsRight className="h-3.5 w-3.5" /></Button>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground tabular-nums">{startRow}–{endRow} of {sortedRows.length.toLocaleString()}</span>
-            <span className="text-sm text-muted-foreground">({page}/{totalPages})</span>
-            <div className="flex items-center gap-0.5 ml-1">
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(1)} disabled={page <= 1}><ChevronsLeft className="h-3.5 w-3.5" /></Button>
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}><ChevronLeft className="h-3.5 w-3.5" /></Button>
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages}><ChevronRight className="h-3.5 w-3.5" /></Button>
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(totalPages)} disabled={page >= totalPages}><ChevronsRight className="h-3.5 w-3.5" /></Button>
-            </div>
+        </>
+      ) : (
+        <div className="w-full border border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-md p-4">
+          <div className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>This table contains no rows</span>
           </div>
         </div>
-      </div>
+      )}
       {canEdit && pendingChanges.length > 0 && (() => {
         const slot = typeof document !== 'undefined' ? document.getElementById('review-changes-slot') : null;
         if (!slot) return null;

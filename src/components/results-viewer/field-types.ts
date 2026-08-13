@@ -30,7 +30,7 @@ export function getInputType(dataType: string): string {
 
 export function formatValueForInput(value: unknown, inputType: string): string {
   if (value === null) return '';
-  const str = String(value);
+  const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
   if (inputType === 'date') {
     const m = str.match(/^\d{4}-\d{2}-\d{2}/);
     return m ? m[0] : str;
@@ -40,6 +40,13 @@ export function formatValueForInput(value: unknown, inputType: string): string {
     return cleaned.length > 16 ? cleaned.substring(0, 16) : cleaned;
   }
   return str;
+}
+
+/** Render a cell value for display/title/copy: JSONB & arrays show their JSON text form. */
+export function displayValueToString(value: unknown): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
 }
 
 const NUMERIC_RE = /^int|float|numeric|decimal|serial|real|double|money/;
