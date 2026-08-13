@@ -1612,8 +1612,7 @@ pub async fn pg_connection_info(client: &PgClient, url: &str, read_only: bool) -
         is_supabase = true;
     }
 
-    let lower = url.to_lowercase();
-    let pooled_endpoint = parts.port == "6543" || lower.contains("-pooler");
+    let pooled_endpoint = parts.port == "6543" || parts.host.to_lowercase().contains("-pooler");
 
     Ok(ConnectionInfo {
         provider,
