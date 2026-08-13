@@ -115,7 +115,7 @@ export default function AddConnectionFormPage() {
     e.preventDefault();
     if (!form.name.trim()) { toast.error("Name is required"); return; }
 
-    const url = urlSource === "url"
+    const url = urlSource === "url" && form.connectionString.trim()
       ? withSslMode(form.connectionString, form.sslmode)
       : buildConnectionURL({
           host: form.host || "localhost",
