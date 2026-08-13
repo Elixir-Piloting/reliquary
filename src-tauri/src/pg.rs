@@ -11,6 +11,7 @@ use tokio_postgres::tls::{
 };
 use tokio_postgres::Socket;
 use tokio_postgres::Client as PgClient;
+use tokio_postgres::types::ToSql;
 
 // ---------------------------------------------------------------------------
 // Parse connection URL -> conn string parts
@@ -513,17 +514,7 @@ pub async fn pg_get_table_data(client: &PgClient, schema: &str, table: &str, pag
     let rows: Vec<HashMap<String, serde_json::Value>> = data_rows.iter().map(|r| {
         let mut map = HashMap::new();
         for (i, col) in cols.iter().enumerate() {
-            let val: serde_json::Value = if r.columns()[i].type_().name() == "int4" || r.columns()[i].type_().name() == "int8" {
-                r.try_get::<_, Option<i64>>(i).ok().flatten().map(|v| serde_json::json!(v)).unwrap_or(serde_json::Value::Null)
-            } else if r.columns()[i].type_().name() == "float8" || r.columns()[i].type_().name() == "float4" {
-                r.try_get::<_, Option<f64>>(i).ok().flatten().map(|v| serde_json::json!(v)).unwrap_or(serde_json::Value::Null)
-            } else if r.columns()[i].type_().name() == "bool" {
-                r.try_get::<_, Option<bool>>(i).ok().flatten().map(|v| serde_json::json!(v)).unwrap_or(serde_json::Value::Null)
-            } else if r.columns()[i].type_().name() == "numeric" || r.columns()[i].type_().name().starts_with('_') {
-                r.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null)
-            } else {
-                r.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null)
-            };
+            let val = pg_value(r, i);
             map.insert(col.name.clone(), val);
         }
         map
@@ -570,22 +561,226 @@ pub async fn pg_execute_query(client: &PgClient, query: &str) -> Result<QueryRes
 
 pub fn pg_value(row: &tokio_postgres::Row, i: usize) -> serde_json::Value {
     let type_name = row.columns()[i].type_().name();
-    if type_name == "int2" || type_name == "int4" || type_name == "int8" {
-        row.try_get::<_, Option<i64>>(i).ok().flatten().map(|v| serde_json::json!(v)).unwrap_or(serde_json::Value::Null)
-    } else if type_name == "float4" || type_name == "float8" {
-        row.try_get::<_, Option<f64>>(i).ok().flatten().map(|v| serde_json::json!(v)).unwrap_or(serde_json::Value::Null)
-    } else if type_name == "numeric" {
-        row.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null)
-    } else if type_name == "bool" {
-        row.try_get::<_, Option<bool>>(i).ok().flatten().map(|v| serde_json::json!(v)).unwrap_or(serde_json::Value::Null)
-    } else if type_name == "json" || type_name == "jsonb" {
-        let s: Option<String> = row.try_get(i).ok().flatten();
-        s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::Value::Null)
-    } else if type_name.starts_with('_') || type_name == "bytea" {
-        serde_json::Value::Null
-    } else {
-        row.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null)
+    match type_name {
+        "int2" => row.try_get::<_, Option<i16>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
+        "int4" => row.try_get::<_, Option<i32>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
+        "int8" => row.try_get::<_, Option<i64>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
+        "float4" => row.try_get::<_, Option<f32>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
+        "float8" => row.try_get::<_, Option<f64>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
+        "bool" => row.try_get::<_, Option<bool>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
+        "numeric" => row.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
+        "json" | "jsonb" => row.try_get::<_, Option<serde_json::Value>>(i).ok().flatten().unwrap_or(serde_json::Value::Null),
+        "bytea" => match row.try_get::<_, Option<Vec<u8>>>(i) {
+            Ok(Some(bytes)) => serde_json::Value::String(format!("\\x{}", bytes_to_hex(&bytes))),
+            _ => serde_json::Value::Null,
+        },
+        "date" => row.try_get::<_, Option<chrono::NaiveDate>>(i).ok().flatten().map(|d| serde_json::Value::String(d.to_string())).unwrap_or(serde_json::Value::Null),
+        "time" => row.try_get::<_, Option<chrono::NaiveTime>>(i).ok().flatten().map(|t| serde_json::Value::String(t.to_string())).unwrap_or(serde_json::Value::Null),
+        "timestamp" => row.try_get::<_, Option<chrono::NaiveDateTime>>(i).ok().flatten().map(|d| serde_json::Value::String(d.to_string())).unwrap_or(serde_json::Value::Null),
+        "timestamptz" => row.try_get::<_, Option<chrono::DateTime<chrono::Utc>>>(i).ok().flatten().map(|d| serde_json::Value::String(d.to_rfc3339())).unwrap_or(serde_json::Value::Null),
+        name if name.starts_with('_') => pg_array_value(row, i, name),
+        _ => row.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
     }
+}
+
+/// Render a 1-D Postgres array column as a JSON array of its element values.
+///
+/// The element type drives which `FromSql` impl is used; there is no universal
+/// array decoder. Element types without a matching `FromSql` decode as `Null`.
+fn pg_array_value(row: &tokio_postgres::Row, i: usize, type_name: &str) -> serde_json::Value {
+    let elem = &type_name[1..];
+    let collect = |vals: Vec<Option<serde_json::Value>>| {
+        serde_json::Value::Array(vals.into_iter().map(|v| v.unwrap_or(serde_json::Value::Null)).collect())
+    };
+    match elem {
+        "int2" => row.try_get::<_, Option<Vec<Option<i16>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::from)).collect()))
+            .unwrap_or(serde_json::Value::Null),
+        "int4" => row.try_get::<_, Option<Vec<Option<i32>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::from)).collect()))
+            .unwrap_or(serde_json::Value::Null),
+        "int8" => row.try_get::<_, Option<Vec<Option<i64>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::from)).collect()))
+            .unwrap_or(serde_json::Value::Null),
+        "float4" => row.try_get::<_, Option<Vec<Option<f32>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::from)).collect()))
+            .unwrap_or(serde_json::Value::Null),
+        "float8" => row.try_get::<_, Option<Vec<Option<f64>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::from)).collect()))
+            .unwrap_or(serde_json::Value::Null),
+        "bool" => row.try_get::<_, Option<Vec<Option<bool>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::from)).collect()))
+            .unwrap_or(serde_json::Value::Null),
+        "json" | "jsonb" => row.try_get::<_, Option<Vec<Option<serde_json::Value>>>>(i).ok().flatten()
+            .map(collect)
+            .unwrap_or(serde_json::Value::Null),
+        "bytea" => row.try_get::<_, Option<Vec<Option<Vec<u8>>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(|b| serde_json::Value::String(format!("\\x{}", bytes_to_hex(&b))))).collect()))
+            .unwrap_or(serde_json::Value::Null),
+        _ => row.try_get::<_, Option<Vec<Option<String>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::String)).collect()))
+            .unwrap_or(serde_json::Value::Null),
+    }
+}
+
+/// Format raw bytes as Postgres's `\x…` hex representation.
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
+}
+
+pub fn json_to_tosql(v: &serde_json::Value) -> Box<dyn ToSql + Send + Sync> {
+    match v {
+        serde_json::Value::Null => Box::new(Option::<String>::None),
+        serde_json::Value::Bool(b) => Box::new(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Box::new(i)
+            } else if let Some(f) = n.as_f64() {
+                Box::new(f)
+            } else {
+                Box::new(n.to_string())
+            }
+        }
+        serde_json::Value::String(s) => Box::new(s.clone()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Box::new(v.to_string()),
+    }
+}
+
+/// Parse one Postgres array literal (e.g. `{1,2,3}` or `{{"a"},{"b"}}`) into a
+/// JSON array. Quoted elements unescape `""`; `NULL` becomes JSON null; bare
+/// integers/floats become JSON numbers; anything else is kept as a string.
+pub fn format_array_literal(s: &str) -> serde_json::Value {
+    let mut pos = 0usize;
+    parse_array_literal(s, &mut pos)
+}
+
+fn parse_array_literal(s: &str, pos: &mut usize) -> serde_json::Value {
+    let bytes = s.as_bytes();
+    if bytes.get(*pos) != Some(&b'{') {
+        return serde_json::Value::Null;
+    }
+    *pos += 1;
+    let mut items = Vec::new();
+    loop {
+        skip_literal_ws(s, pos);
+        if bytes.get(*pos) != Some(&b'}') {
+            items.push(parse_literal_element(s, pos));
+            skip_literal_ws(s, pos);
+        }
+        match bytes.get(*pos) {
+            Some(&b',') => *pos += 1,
+            Some(&b'}') => {
+                *pos += 1;
+                break;
+            }
+            _ => return serde_json::Value::Null,
+        }
+    }
+    serde_json::Value::Array(items)
+}
+
+fn parse_literal_element(s: &str, pos: &mut usize) -> serde_json::Value {
+    let bytes = s.as_bytes();
+    skip_literal_ws(s, pos);
+    match bytes.get(*pos) {
+        Some(&b'{') => parse_array_literal(s, pos),
+        Some(&b'"') => {
+            *pos += 1;
+            let mut out = String::new();
+            loop {
+                match bytes.get(*pos) {
+                    Some(&b'"') if bytes.get(*pos + 1) == Some(&b'"') => {
+                        out.push('"');
+                        *pos += 2;
+                    }
+                    Some(&b'"') => {
+                        *pos += 1;
+                        break;
+                    }
+                    Some(&c) => {
+                        out.push(c as char);
+                        *pos += 1;
+                    }
+                    None => break,
+                }
+            }
+            serde_json::Value::String(out)
+        }
+        _ => {
+            let start = *pos;
+            while let Some(&c) = bytes.get(*pos) {
+                if c == b',' || c == b'}' {
+                    break;
+                }
+                *pos += 1;
+            }
+            let token = s[start..*pos].trim();
+            if token.is_empty() || token.eq_ignore_ascii_case("null") {
+                return serde_json::Value::Null;
+            }
+            if let Ok(i) = token.parse::<i64>() {
+                return serde_json::json!(i);
+            }
+            if let Ok(f) = token.parse::<f64>() {
+                return serde_json::json!(f);
+            }
+            serde_json::Value::String(token.to_string())
+        }
+    }
+}
+
+fn skip_literal_ws(s: &str, pos: &mut usize) {
+    while let Some(c) = s[*pos..].chars().next() {
+        if c.is_whitespace() {
+            *pos += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+}
+
+pub async fn pg_execute_query_params(client: &PgClient, query: &str, params: &[serde_json::Value]) -> Result<QueryResult, String> {
+    let start = std::time::Instant::now();
+    let trimmed = query.trim().to_uppercase();
+    let is_select = trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") || trimmed.starts_with("EXPLAIN") || trimmed.starts_with("SHOW");
+
+    let bindings: Vec<Box<dyn ToSql + Send + Sync>> = params.iter().map(json_to_tosql).collect();
+    let bind_refs: Vec<&(dyn ToSql + Sync)> = bindings.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
+
+    if is_select {
+        let rows = tokio::time::timeout(std::time::Duration::from_secs(30), client.query(query, &bind_refs))
+            .await
+            .map_err(|_| "Query timed out (30s)".to_string())?
+            .map_err(|e| format!("query: {}", e))?;
+        let cols: Vec<ColumnMeta> = rows.first().map(|r| {
+            (0..r.len()).map(|i| ColumnMeta {
+                name: r.columns()[i].name().to_string(),
+                data_type: r.columns()[i].type_().name().to_string(),
+            }).collect()
+        }).unwrap_or_default();
+        let data: Vec<HashMap<String, serde_json::Value>> = rows.iter().map(|r| {
+            let mut map = HashMap::new();
+            for (i, col) in cols.iter().enumerate() {
+                let val = pg_value(r, i);
+                map.insert(col.name.clone(), val);
+            }
+            map
+        }).collect();
+        let elapsed = start.elapsed().as_millis() as u64;
+        let row_count = data.len();
+        return Ok(QueryResult { columns: cols, rows: data, row_count, affected_rows: None, is_select: true, execution_time_ms: elapsed });
+    }
+
+    let affected = tokio::time::timeout(std::time::Duration::from_secs(30), client.execute(query, &bind_refs))
+        .await
+        .map_err(|_| "Query timed out (30s)".to_string())?
+        .map_err(|e| format!("execute: {}", e))?;
+    let elapsed = start.elapsed().as_millis() as u64;
+    Ok(QueryResult { columns: vec![], rows: vec![], row_count: 0, affected_rows: Some(affected), is_select: false, execution_time_ms: elapsed })
 }
 
 pub async fn pg_get_enum_values(client: &PgClient, type_name: &str) -> Result<Vec<String>, String> {

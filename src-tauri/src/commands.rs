@@ -214,6 +214,13 @@ pub async fn execute_query(connection_id: String, query: String, state: tauri::S
 }
 
 #[tauri::command]
+pub async fn execute_query_params(connection_id: String, query: String, params: Vec<serde_json::Value>, state: tauri::State<'_, AppState>) -> Result<QueryResult, String> {
+    let guard = state.connections.lock().await;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_execute_query_params(&client, &query, &params).await
+}
+
+#[tauri::command]
 pub async fn get_enum_values(connection_id: String, type_name: String, state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
     let guard = state.connections.lock().await;
     let client = pg_client(&guard, &connection_id).await?;
