@@ -1,5 +1,3 @@
-import type { ConnectionConfig } from "@/lib/db/types";
-
 export interface LocalPostgresServer {
   key: string;
   host: string;
@@ -9,6 +7,12 @@ export interface LocalPostgresServer {
   expanded?: boolean;
 }
 
+export interface LocalPostgresConnectionDraft {
+  name: string;
+  url: string;
+  provider?: string;
+}
+
 export interface LocalPostgresManagerProps {
-  onServerSelect: (config: ConnectionConfig) => void;
+  onServerSelect: (config: LocalPostgresConnectionDraft) => void;
 }

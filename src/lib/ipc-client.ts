@@ -7,6 +7,9 @@ export interface Connection {
   provider?: string;
   color?: string;
   createdAt?: string;
+  sslmode?: string;
+  readOnly?: boolean;
+  neonApiKey?: string;
 }
 
 export interface SchemaInfo {
@@ -188,8 +191,8 @@ const API = {
   },
 
   // Connection lifecycle
-  async connect(connectionId: string): Promise<void> {
-    return invoke("connect", { connectionId });
+  async connect(connectionId: string, url: string, readOnly: boolean): Promise<void> {
+    return invoke("connect", { connectionId, url, readOnly });
   },
   async disconnect(connectionId: string): Promise<void> {
     return invoke("disconnect", { connectionId });

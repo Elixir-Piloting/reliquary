@@ -3,28 +3,21 @@ import { useNavigate } from "react-router-dom";
 import { LocalPostgresManager } from "@/components/local-postgres-manager";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
-import { addConnection } from "@/lib/connections/store";
-import { buildConnectionURL } from "@/lib/connections/url-parser";
-import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionConfig } from "@/lib/db/types";
+import { useAddConnection, useConnect } from "@/lib/query/hooks/use-connections";
+import type { LocalPostgresConnectionDraft } from "@/components/local-postgres-manager/types";
 import { toast } from "sonner";
 
 export default function LocalPostgresSelectionPage() {
   const navigate = useNavigate();
+  const addConnectionMutation = useAddConnection();
+  const connectMutation = useConnect();
 
-  const handleServerSelect = async (config: ConnectionConfig) => {
+  const handleServerSelect = async (config: LocalPostgresConnectionDraft) => {
     try {
-      addConnection(config);
-      const url = buildConnectionURL({
-        host: config.host || "localhost",
-        port: config.port || 5432,
-        database: config.database || "",
-        user: config.user || "",
-        password: config.password || "",
-      });
-      await invoke("connect", { connectionId: config.id, url });
-      toast.success(`Connected to ${config.database}`);
-      navigate(`/db/${config.id}`);
+      const created = await addConnectionMutation.mutateAsync({ name: config.name, url: config.url });
+      await connectMutation.mutateAsync({ connectionId: created.id, url: created.url, readOnly: false });
+      toast.success(`Connected to ${config.name}`);
+      navigate(`/db/${created.id}`);
     } catch (e: any) {
       toast.error("Connection failed", { description: String(e) });
     }

@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { Persistence } from "@/lib/persistence";
 import { useLocalServers, useLocalPgDatabases } from "@/lib/query/hooks/use-local-pg-servers";
 import type { LocalPgDatabase } from "@/lib/ipc-client";
-import type { ConnectionConfig } from "@/lib/db/types";
+import { buildConnectionURL } from "@/lib/connections/url-parser";
 import type { LocalPostgresServer, LocalPostgresManagerProps } from "./types";
 import { ServerList } from "./ServerList";
 
@@ -123,17 +123,18 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
   const handleSaveName = () => {
     if (!pendingConnection) return;
     const { server, database, user, password } = pendingConnection;
-    const config: ConnectionConfig = {
-      id: `conn-${Date.now()}`,
-      name: connectionName.trim() || database,
-      provider: "postgresql",
+    const url = buildConnectionURL({
       host: server.host,
       port: server.port,
       database,
-      user,
-      password,
-    };
-    onServerSelect(config);
+      user: user || "",
+      password: password || "",
+    });
+    onServerSelect({
+      name: connectionName.trim() || database,
+      url,
+      provider: "postgresql",
+    });
     setShowNameDialog(false);
     setPendingConnection(null);
   };

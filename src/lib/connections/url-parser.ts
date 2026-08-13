@@ -6,6 +6,7 @@ export interface ParsedConnectionURL {
   user: string;
   password: string;
   ssl?: boolean;
+  sslmode?: string;
 }
 
 export function detectProviderFromConnectionString(url: string): string | null {
@@ -41,7 +42,7 @@ function basePostgres(url: string): ParsedConnectionURL {
       const port = portStr ? parseInt(portStr, 10) : 5432;
       if (!host) throw new Error("Missing host");
 
-      return { provider: "postgresql", host: decodeURIComponent(host), port, database: database ? decodeURIComponent(database) : "", user, password, ssl };
+      return { provider: "postgresql", host: decodeURIComponent(host), port, database: database ? decodeURIComponent(database) : "", user, password, ssl, sslmode: sslMode || undefined };
     } catch { /* fall through */ }
   }
 
@@ -71,10 +72,11 @@ function basePostgres(url: string): ParsedConnectionURL {
   const decodedPassword = password ? decodeURIComponent(password) : "";
   const decodedHost = host ? decodeURIComponent(host) : "";
   const decodedDatabase = database ? decodeURIComponent(database) : "";
-  const ssl = new URLSearchParams(queryString).get("sslmode") === "require" || new URLSearchParams(queryString).get("ssl") === "true";
+  const sslMode = new URLSearchParams(queryString).get("sslmode") || undefined;
+  const ssl = sslMode === "require" || sslMode === "prefer" || new URLSearchParams(queryString).get("ssl") === "true";
 
   if (!decodedHost) throw new Error("Missing host");
-  return { provider: "postgresql", host: decodedHost, port, database: decodedDatabase, user: decodedUser, password: decodedPassword, ssl };
+  return { provider: "postgresql", host: decodedHost, port, database: decodedDatabase, user: decodedUser, password: decodedPassword, ssl, sslmode: sslMode };
 }
 
 export function parseConnectionURL(url: string): ParsedConnectionURL {
@@ -85,12 +87,30 @@ export function parseConnectionURL(url: string): ParsedConnectionURL {
   return result;
 }
 
-export function buildConnectionURL(config: { host: string; port: number; database: string; user: string; password: string; ssl?: boolean }): string {
-  const { host, port, database, user, password, ssl } = config;
+export function buildConnectionURL(config: { host: string; port: number; database: string; user: string; password: string; ssl?: boolean; sslmode?: string }): string {
+  const { host, port, database, user, password, ssl, sslmode } = config;
   const encodedUser = encodeURIComponent(user);
   const encodedPassword = encodeURIComponent(password);
   const encodedHost = encodeURIComponent(host);
   let url = `postgresql://${encodedUser}:${encodedPassword}@${encodedHost}:${port}/${encodeURIComponent(database)}`;
-  if (ssl) url += "?sslmode=require";
+  const mode = sslmode || (ssl ? "require" : undefined);
+  if (mode) url += `?sslmode=${mode}`;
   return url;
+}
+
+/**
+ * Rewrite (or append) the `sslmode` query parameter on an existing PostgreSQL
+ * connection URL, preserving credentials, host, port, database and any other
+ * query params. Falls back to the raw URL if it cannot be parsed.
+ */
+export function withSslMode(url: string, sslmode: string): string {
+  if (!url) return url;
+  const httpUrl = url.replace(/^(postgresql|postgres):\/\//, "http://");
+  try {
+    const u = new URL(httpUrl);
+    u.searchParams.set("sslmode", sslmode);
+    return u.toString().replace(/^http:\/\//, "postgresql://");
+  } catch {
+    return url;
+  }
 }
