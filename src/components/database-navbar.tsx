@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Code2, Table, Network, PanelLeft, PanelLeftClose } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { RolesPanel } from "@/components/roles-panel";
 import { NeonBranchSwitcher } from "@/components/neon-branch-switcher";
 import API from "@/lib/ipc-client";
 import type { ConnectionInfo } from "@/lib/ipc-client";
+import { onBranchSwitched } from "@/lib/branch-events";
 
 interface DatabaseNavbarProps { connectionId: string; }
 
@@ -38,8 +39,7 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
   const { data: connections = [] } = useConnections();
   const [connInfo, setConnInfo] = useState<ConnectionInfo | null>(null);
 
-  useEffect(() => {
-    setConnInfo(null);
+  const loadConnectionInfo = useCallback(() => {
     if (!connectionId) return;
     let cancelled = false;
     API.getConnectionInfo(connectionId)
@@ -47,6 +47,12 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
       .catch(() => { if (!cancelled) setConnInfo(null); });
     return () => { cancelled = true; };
   }, [connectionId]);
+
+  useEffect(loadConnectionInfo, [loadConnectionInfo]);
+
+  useEffect(() => {
+    return onBranchSwitched(() => { setConnInfo(null); loadConnectionInfo(); });
+  }, [loadConnectionInfo]);
 
   const navItems = [
     { id: "query", label: "Query", icon: Code2, path: `/db/${connectionId}/query` },

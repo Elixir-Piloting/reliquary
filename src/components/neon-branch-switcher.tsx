@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import API from "@/lib/ipc-client";
 import type { Connection, NeonBranch } from "@/lib/ipc-client";
 import { queryKeys } from "@/lib/query/keys";
+import { dispatchBranchSwitched } from "@/lib/branch-events";
 import { cn } from "@/lib/utils";
 
 interface NeonBranchSwitcherProps {
@@ -87,7 +88,6 @@ export function NeonBranchSwitcher({ connectionId, readOnly }: NeonBranchSwitche
       setApiKey(key);
       setApiKeyDraft("");
       toast.success("Neon API key saved");
-      await loadBranches(key);
     } catch (e) {
       toast.error("Failed to save Neon API key", { description: String(e) });
     }
@@ -116,6 +116,7 @@ export function NeonBranchSwitcher({ connectionId, readOnly }: NeonBranchSwitche
       queryClient.invalidateQueries({ queryKey: queryKeys.db.status(connectionId) });
       setConnectionUrl(branch.connectionUri);
       setBranches(null);
+      dispatchBranchSwitched();
       toast.success(`Switched to branch "${branch.name}"`);
       setOpen(false);
     } catch (e) {

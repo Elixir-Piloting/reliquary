@@ -77,23 +77,25 @@ export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, ta
   useEffect(() => {
     if (!open) return;
     if (loaded.has(activeTab)) return;
-    const markLoaded = () => setLoaded(prev => new Set(prev).add(activeTab));
+    let cancelled = false;
+    const markLoaded = () => { if (!cancelled) setLoaded(prev => new Set(prev).add(activeTab)); };
     if (activeTab === "triggers") {
       setTriggers(prev => ({ ...prev, loading: true, error: null }));
       API.getTriggers(connectionId, schema, table)
-        .then(data => { setTriggers({ data, loading: false, error: null }); markLoaded(); })
-        .catch(e => { setTriggers({ data: null, loading: false, error: String(e) }); markLoaded(); });
+        .then(data => { if (!cancelled) setTriggers({ data, loading: false, error: null }); markLoaded(); })
+        .catch(e => { if (!cancelled) setTriggers({ data: null, loading: false, error: String(e) }); });
     } else if (activeTab === "functions") {
       setFunctions(prev => ({ ...prev, loading: true, error: null }));
       API.getFunctions(connectionId, schema)
-        .then(data => { setFunctions({ data, loading: false, error: null }); markLoaded(); })
-        .catch(e => { setFunctions({ data: null, loading: false, error: String(e) }); markLoaded(); });
+        .then(data => { if (!cancelled) setFunctions({ data, loading: false, error: null }); markLoaded(); })
+        .catch(e => { if (!cancelled) setFunctions({ data: null, loading: false, error: String(e) }); });
     } else {
       setRls(prev => ({ ...prev, loading: true, error: null }));
       API.getRlsPolicies(connectionId, schema, table)
-        .then(data => { setRls({ data, loading: false, error: null }); markLoaded(); })
-        .catch(e => { setRls({ data: null, loading: false, error: String(e) }); markLoaded(); });
+        .then(data => { if (!cancelled) setRls({ data, loading: false, error: null }); markLoaded(); })
+        .catch(e => { if (!cancelled) setRls({ data: null, loading: false, error: String(e) }); });
     }
+    return () => { cancelled = true; };
   }, [open, activeTab, loaded, connectionId, schema, table]);
 
   return (

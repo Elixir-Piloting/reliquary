@@ -5,6 +5,7 @@ import { SchemaSelector } from "./SchemaSelector";
 import { TableSearch } from "./TableSearch";
 import { TableList } from "./TableList";
 import { TableDetailsPanel } from "@/components/table-details-panel";
+import { onBranchSwitched } from "@/lib/branch-events";
 import type { Table } from "./types";
 import type { SchemaInfo } from "@/lib/db/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -59,6 +60,13 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
 
   useEffect(() => { loadSchemas(); }, [loadSchemas]);
   useEffect(() => { loadTables(); }, [loadTables]);
+
+  useEffect(() => {
+    return onBranchSwitched(() => {
+      loadSchemas();
+      loadTables();
+    });
+  }, [loadSchemas, loadTables]);
 
   if (!connectionId) return <div className="p-4 text-sm text-muted-foreground">Connect to a database to view schemas</div>;
   if (schemasLoading && schemas.length === 0) return <SchemaExplorerLoadingState />;
