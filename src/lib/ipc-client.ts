@@ -188,10 +188,10 @@ const API = {
     return invoke("list_connections");
   },
   async addConnection(config: { name: string; url: string }): Promise<Connection> {
-    return invoke("add_connection", { name: config.name, url: config.url });
+    return invoke("add_connection", { name: config.name, url: config.url, readOnly: config.readOnly ?? false });
   },
   async updateConnection(id: string, updates: { name?: string; url?: string }): Promise<void> {
-    return invoke("update_connection", { id, name: updates.name, url: updates.url });
+    return invoke("update_connection", { id, name: updates.name, url: updates.url, readOnly: updates.readOnly });
   },
   async deleteConnection(id: string): Promise<void> {
     return invoke("delete_connection", { id });

@@ -12,7 +12,7 @@ export function useConnections() {
 export function useAddConnection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (config: { name: string; url: string }) => API.addConnection(config),
+    mutationFn: (config: { name: string; url: string; readOnly?: boolean }) => API.addConnection(config),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.connections.all }),
   });
 }
@@ -20,7 +20,7 @@ export function useAddConnection() {
 export function useUpdateConnection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...rest }: { id: string; name?: string; url?: string }) => API.updateConnection(id, rest),
+    mutationFn: ({ id, ...rest }: { id: string; name?: string; url?: string; readOnly?: boolean }) => API.updateConnection(id, rest),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.connections.all }),
   });
 }

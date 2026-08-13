@@ -128,10 +128,10 @@ export default function AddConnectionFormPage() {
 
     try {
       if (editId) {
-        await updateConnectionMutation.mutateAsync({ id: editId, name: form.name, url });
+        await updateConnectionMutation.mutateAsync({ id: editId, name: form.name, url, readOnly: form.readOnly });
         toast.success("Connection updated");
       } else {
-        await addConnectionMutation.mutateAsync({ name: form.name, url });
+        await addConnectionMutation.mutateAsync({ name: form.name, url, readOnly: form.readOnly });
         toast.success("Connection added");
       }
       navigate("/");

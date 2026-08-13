@@ -12,7 +12,7 @@ pub async fn list_connections(state: tauri::State<'_, AppState>) -> Result<Vec<S
 }
 
 #[tauri::command]
-pub async fn add_connection(name: String, url: String, state: tauri::State<'_, AppState>) -> Result<StoredConnection, String> {
+pub async fn add_connection(name: String, url: String, read_only: bool, state: tauri::State<'_, AppState>) -> Result<StoredConnection, String> {
     let mut config = state.load_config();
     let id = uuid::Uuid::new_v4().to_string();
     let provider = detect_provider(&url).to_string();
@@ -24,7 +24,7 @@ pub async fn add_connection(name: String, url: String, state: tauri::State<'_, A
         color: None,
         created_at: Some(Utc::now().to_rfc3339()),
         sslmode: None,
-        read_only: None,
+        read_only: Some(read_only),
         neon_api_key: None,
     };
     config.push(conn.clone());
@@ -33,11 +33,12 @@ pub async fn add_connection(name: String, url: String, state: tauri::State<'_, A
 }
 
 #[tauri::command]
-pub async fn update_connection(id: String, name: Option<String>, url: Option<String>, state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn update_connection(id: String, name: Option<String>, url: Option<String>, read_only: Option<bool>, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut config = state.load_config();
     if let Some(entry) = config.iter_mut().find(|c| c.id == id) {
         if let Some(n) = name { entry.name = n; }
         if let Some(u) = url { let provider = detect_provider(&u).to_string(); entry.url = u; entry.provider = Some(provider); }
+        if let Some(ro) = read_only { entry.read_only = Some(ro); }
         state.save_config(&config);
         Ok(())
     } else {
