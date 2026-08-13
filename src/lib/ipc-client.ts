@@ -154,6 +154,15 @@ export interface ConnectionInfo {
   pooledEndpoint: boolean;
 }
 
+export interface NeonBranch {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  primary: boolean;
+  connectionUri?: string;
+}
+
 function getConnectionId(): string {
   if (typeof window === "undefined") return "";
   const stored = localStorage.getItem("relic_active_connection");
@@ -246,6 +255,14 @@ const API = {
         ...options,
       },
     });
+  },
+
+  // Neon branches
+  async listNeonBranches(connectionId: string, apiKey: string): Promise<NeonBranch[]> {
+    return invoke("list_neon_branches", { connectionId, apiKey });
+  },
+  async saveNeonApiKey(connectionId: string, apiKey: string): Promise<void> {
+    return invoke("save_neon_api_key", { connectionId, apiKey });
   },
 
   // Local PostgreSQL

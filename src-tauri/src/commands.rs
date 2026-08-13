@@ -326,6 +326,25 @@ pub async fn get_enum_values(connection_id: String, type_name: String, state: ta
 }
 
 #[tauri::command]
+pub async fn list_neon_branches(connection_id: String, api_key: String, state: tauri::State<'_, AppState>) -> Result<Vec<NeonBranch>, String> {
+    let guard = state.connections.lock().await;
+    let url = conn_url(&guard, &connection_id)?;
+    crate::neon::list_neon_branches(&api_key, &url).await
+}
+
+#[tauri::command]
+pub async fn save_neon_api_key(connection_id: String, api_key: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut config = state.load_config();
+    if let Some(entry) = config.iter_mut().find(|c| c.id == connection_id) {
+        entry.neon_api_key = Some(api_key);
+        state.save_config(&config);
+        Ok(())
+    } else {
+        Err("Connection not found".into())
+    }
+}
+
+#[tauri::command]
 pub async fn detect_local_servers(_state: tauri::State<'_, AppState>) -> Result<Vec<LocalPgServer>, String> {
     use tokio::net::TcpStream;
     let ports: Vec<u16> = (5432..=5435).collect();

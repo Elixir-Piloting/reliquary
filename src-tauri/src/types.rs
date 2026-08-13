@@ -219,6 +219,18 @@ pub struct LocalPgDatabase {
     pub size: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NeonBranch {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub primary: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_uri: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionInfo {
