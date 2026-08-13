@@ -1,8 +1,11 @@
 "use client";
-import { Table as TableIcon, Loader2, Plus, RefreshCw } from "lucide-react";
+import { Table2, Eye, Layers, Loader2, Plus, RefreshCw, ShieldAlert, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
+} from "@/components/ui/context-menu";
 import type { Table } from "./types";
 
 interface TableListProps {
@@ -12,10 +15,19 @@ interface TableListProps {
   onRefresh?: () => void;
   onTableSelect: (schema: string, table: string) => void;
   onOpenNewTableTab?: (schema: string) => void;
+  onOpenTableDetails?: (schema: string, table: string) => void;
   selectedSchema?: string;
 }
 
-export function TableList({ tables, isLoading, tableSearchTerm, onRefresh, onTableSelect, onOpenNewTableTab, selectedSchema }: TableListProps) {
+function tableKind(table: Table): { icon: typeof Table2; label: string } {
+  const type = (table.tableType || "TABLE").toUpperCase();
+  if (type.includes("MATERIALIZED")) return { icon: Layers, label: "Materialized view" };
+  if (type.includes("VIEW")) return { icon: Eye, label: "View" };
+  if (type.includes("PARTITIONED")) return { icon: Table2, label: "Partitioned table" };
+  return { icon: Table2, label: "Table" };
+}
+
+export function TableList({ tables, isLoading, tableSearchTerm, onRefresh, onTableSelect, onOpenNewTableTab, onOpenTableDetails, selectedSchema }: TableListProps) {
   const filteredTables = tableSearchTerm?.trim()
     ? tables.filter(t => t.name.toLowerCase().includes(tableSearchTerm.toLowerCase()))
     : tables;
@@ -55,16 +67,66 @@ export function TableList({ tables, isLoading, tableSearchTerm, onRefresh, onTab
         </div>
       ) : (
         <div className="space-y-0.5">
-          {filteredTables.map((table) => (
-            <button key={`${table.schema}.${table.name}`} onClick={() => onTableSelect(table.schema, table.name)}
-              className="group flex items-center gap-1 w-full">
-              <div className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground text-left">
-                <TableIcon className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left">{table.name}</span>
-                {table.rowCount !== undefined && <span className="text-xs text-muted-foreground">{table.rowCount.toLocaleString()}</span>}
-              </div>
-            </button>
-          ))}
+          {filteredTables.map((table) => {
+            const { icon: KindIcon, label: kindLabel } = tableKind(table);
+            return (
+              <ContextMenu key={`${table.schema}.${table.name}`}>
+                <ContextMenuTrigger asChild>
+                  <div className="group relative flex items-center w-full">
+                    <button onClick={() => onTableSelect(table.schema, table.name)}
+                      className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground text-left min-w-0">
+                      <TooltipProvider delayDuration={600}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="shrink-0 flex items-center">
+                              <KindIcon className="h-4 w-4" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="right"><p>{kindLabel}</p></TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <span className="flex-1 text-left truncate">{table.name}</span>
+                      {table.rowCount !== undefined && (
+                        <TooltipProvider delayDuration={600}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-xs text-muted-foreground shrink-0 tabular-nums">~{table.rowCount.toLocaleString()}</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="right"><p>Estimated row count</p></TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                      {table.hasRls && (
+                        <TooltipProvider delayDuration={600}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="shrink-0 flex items-center">
+                                <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="right"><p>Row Level Security enabled</p></TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                    </button>
+                    {onOpenTableDetails && (
+                      <button onClick={() => onOpenTableDetails(table.schema, table.name)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground shrink-0 mr-1"
+                        aria-label={`Details for ${table.name}`}>
+                        <Info className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onSelect={() => onOpenTableDetails?.(table.schema, table.name)}>
+                    <Info className="h-4 w-4 mr-2" />
+                    Details
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          })}
         </div>
       )}
     </div>

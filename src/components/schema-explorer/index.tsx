@@ -1,10 +1,10 @@
 "use client";
-import { useState, useMemo, useCallback, useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SchemaSelector } from "./SchemaSelector";
 import { TableSearch } from "./TableSearch";
 import { TableList } from "./TableList";
+import { TableDetailsPanel } from "@/components/table-details-panel";
 import type { Table } from "./types";
 import type { SchemaInfo } from "@/lib/db/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -33,6 +33,7 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
   const [tables, setTables] = useState<Table[]>([]);
   const [schemasLoading, setSchemasLoading] = useState(false);
   const [tablesLoading, setTablesLoading] = useState(false);
+  const [detailsTable, setDetailsTable] = useState<{ schema: string; table: string } | null>(null);
 
   const loadSchemas = useCallback(async () => {
     if (!connectionId) return;
@@ -51,7 +52,7 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
     setTablesLoading(true);
     try {
       const result = await invoke<any[]>("get_tables", { connectionId, schema: selectedSchema });
-      setTables(result.map(t => ({ schema: t.schemaName, name: t.tableName, rowCount: t.rowCount })));
+      setTables(result.map(t => ({ schema: t.schemaName, name: t.tableName, rowCount: t.rowCount, tableType: t.tableType, hasRls: t.hasRls })));
     } catch (e) { console.error("Failed to load tables", e); }
     setTablesLoading(false);
   }, [connectionId, selectedSchema]);
@@ -71,11 +72,21 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
       <div className="space-y-1">
         {selectedSchema ? (
           <TableList tables={tables} isLoading={tablesLoading} tableSearchTerm={tableSearchTerm} selectedSchema={selectedSchema}
-            onRefresh={loadTables} onTableSelect={onTableSelect!} onOpenNewTableTab={onOpenNewTableTab} />
+            onRefresh={loadTables} onTableSelect={onTableSelect!} onOpenNewTableTab={onOpenNewTableTab}
+            onOpenTableDetails={(schema, table) => setDetailsTable({ schema, table })} />
         ) : schemas.length === 0 && !schemasLoading ? (
           <div className="px-2 py-1 text-sm text-muted-foreground">No schemas found</div>
         ) : null}
       </div>
+      {connectionId && detailsTable && (
+        <TableDetailsPanel
+          open={true}
+          onOpenChange={(open) => { if (!open) setDetailsTable(null); }}
+          connectionId={connectionId}
+          schema={detailsTable.schema}
+          table={detailsTable.table}
+        />
+      )}
     </div>
   );
 }
