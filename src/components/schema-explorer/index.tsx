@@ -43,8 +43,9 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
       const result = await invoke<SchemaInfo[]>("get_schemas", { connectionId });
       const names = result.map(s => s.schemaName);
       setSchemas(names);
-      if (names.length > 0 && !selectedSchema) setSelectedSchema(names[0]);
-    } catch (e) { console.error("Failed to load schemas", e); }
+      if (names.length > 0 && (!selectedSchema || !names.includes(selectedSchema))) setSelectedSchema(names[0]);
+      else if (names.length === 0) setSelectedSchema(null);
+    } catch (e) { console.error("Failed to load schemas", e); setSchemas([]); setSelectedSchema(null); }
     setSchemasLoading(false);
   }, [connectionId, selectedSchema]);
 
@@ -54,7 +55,7 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
     try {
       const result = await invoke<any[]>("get_tables", { connectionId, schema: selectedSchema });
       setTables(result.map(t => ({ schema: t.schemaName, name: t.tableName, rowCount: t.rowCount, tableType: t.tableType, hasRls: t.hasRls })));
-    } catch (e) { console.error("Failed to load tables", e); }
+    } catch (e) { console.error("Failed to load tables", e); setTables([]); }
     setTablesLoading(false);
   }, [connectionId, selectedSchema]);
 

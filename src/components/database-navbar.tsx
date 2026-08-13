@@ -40,6 +40,7 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
   const [connInfo, setConnInfo] = useState<ConnectionInfo | null>(null);
 
   const loadConnectionInfo = useCallback(() => {
+    setConnInfo(null);
     if (!connectionId) return;
     let cancelled = false;
     API.getConnectionInfo(connectionId)
