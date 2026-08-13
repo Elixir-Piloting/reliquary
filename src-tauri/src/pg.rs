@@ -549,6 +549,8 @@ const TRIGGER_LIST_SQL: &str =
      JOIN pg_class c ON c.oid = pt.tgrelid \
      JOIN pg_namespace n ON n.oid = c.relnamespace \
      WHERE n.nspname = $1 AND c.relname = $2 \
+       AND t.event_object_schema = n.nspname \
+       AND t.event_object_table = c.relname \
      ORDER BY t.trigger_name";
 
 pub async fn pg_get_triggers(client: &PgClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
@@ -1613,6 +1615,8 @@ mod tests {
         assert!(!TRIGGER_LIST_SQL.contains("is_enabled"), "information_schema.triggers has no is_enabled column");
         assert!(TRIGGER_LIST_SQL.contains("pg_trigger pt"), "joined to pg_trigger for tgenabled");
         assert!(TRIGGER_LIST_SQL.contains("n.nspname = $1 AND c.relname = $2"), "schema/table filter via pg_class+pg_namespace");
+        assert!(TRIGGER_LIST_SQL.contains("t.event_object_schema = n.nspname"), "info-schema side must be constrained to the same table to avoid name collisions");
+        assert!(TRIGGER_LIST_SQL.contains("t.event_object_table = c.relname"), "info-schema side must be constrained to the same table to avoid name collisions");
     }
 
     #[test]
