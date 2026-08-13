@@ -123,6 +123,27 @@ pub struct TestConnectionResult {
     pub server_version: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RowMutationStatement {
+    pub query: String,
+    pub params: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplainResult {
+    pub plan: serde_json::Value,
+    pub execution_time_ms: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryOptions {
+    pub confirm_destructive: bool,
+    pub read_only: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalPgServer {
@@ -148,8 +169,13 @@ pub struct LocalPgDatabase {
 // App state
 // ---------------------------------------------------------------------------
 
+pub struct ActiveConnection {
+    pub pool: Arc<deadpool_postgres::Pool>,
+    pub read_only: bool,
+}
+
 pub struct AppState {
-    pub connections: tokio::sync::Mutex<HashMap<String, Arc<deadpool_postgres::Pool>>>,
+    pub connections: tokio::sync::Mutex<HashMap<String, ActiveConnection>>,
     pub config_path: PathBuf,
 }
 

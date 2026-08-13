@@ -757,6 +757,432 @@ pub fn json_to_tosql(v: &serde_json::Value) -> Box<dyn ToSql + Send + Sync> {
     }
 }
 
+pub fn is_select_query(sql: &str) -> bool {
+    let trimmed = sql.trim().to_ascii_uppercase();
+    trimmed.starts_with("SELECT")
+        || trimmed.starts_with("WITH")
+        || trimmed.starts_with("EXPLAIN")
+        || trimmed.starts_with("SHOW")
+        || trimmed.starts_with("VALUES")
+}
+
+fn is_destructive_keyword(kw: &str) -> bool {
+    matches!(
+        kw,
+        "drop" | "delete"
+            | "truncate"
+            | "update"
+            | "alter"
+            | "create"
+            | "grant"
+            | "revoke"
+            | "vacuum"
+            | "reindex"
+    )
+}
+
+/// Detect whether `sql` contains any statement whose (WITH-traversed) first
+/// keyword is destructive. Every top-level statement is scanned (splitting on
+/// `;` outside string literals, quoted identifiers and comments), and an
+/// `EXPLAIN ANALYZE` of a destructive statement is itself treated as
+/// destructive because ANALYZE actually executes the query.
+pub fn is_destructive(sql: &str) -> bool {
+    for stmt in top_level_statements(sql) {
+        let mut sc = SqlScanner::new(stmt);
+        match sc.read_statement_keyword() {
+            Some(kw) if is_destructive_keyword(&kw) => return true,
+            Some(kw) if kw == "explain" && explain_would_execute_destructive(&mut sc) => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Split SQL into top-level statements on `;` that is not inside a string
+/// literal, quoted identifier, comment, or dollar-quoted string.
+fn top_level_statements(sql: &str) -> Vec<&str> {
+    let bytes = sql.as_bytes();
+    let mut stmts = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    let mut in_sq = false;
+    let mut in_dq = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' if !in_dq => {
+                if in_sq {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                        i += 2;
+                        continue;
+                    }
+                    in_sq = false;
+                } else {
+                    in_sq = true;
+                }
+                i += 1;
+            }
+            b'"' if !in_sq => {
+                if in_dq {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                        i += 2;
+                        continue;
+                    }
+                    in_dq = false;
+                } else {
+                    in_dq = true;
+                }
+                i += 1;
+            }
+            b'-' if !in_sq && !in_dq && i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if !in_sq && !in_dq && i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+            }
+            b'$' if !in_sq && !in_dq => {
+                if let Some(tag_len) = dollar_tag_len(bytes, i) {
+                    i = find_dollar_close(bytes, i + tag_len, tag_len);
+                } else {
+                    i += 1;
+                }
+            }
+            b';' if !in_sq && !in_dq => {
+                stmts.push(&sql[start..i]);
+                i += 1;
+                start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    stmts.push(&sql[start..]);
+    stmts
+}
+
+/// Length of the opening `$tag$` delimiter if `start` begins a dollar-quoted
+/// string. `$1`-style parameter references (digit after `$`) are not quotes.
+fn dollar_tag_len(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut j = start + 1;
+    while j < bytes.len() && bytes[j] != b'$' {
+        if bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' {
+            j += 1;
+        } else {
+            return None;
+        }
+    }
+    if j >= bytes.len() {
+        return None;
+    }
+    let tag_is_valid = j == start + 1
+        || bytes[start + 1].is_ascii_alphabetic()
+        || bytes[start + 1] == b'_';
+    if !tag_is_valid {
+        return None;
+    }
+    Some(j - start + 1)
+}
+
+fn find_dollar_close(bytes: &[u8], mut pos: usize, tag_len: usize) -> usize {
+    let delim = &bytes[pos - tag_len..pos];
+    while pos + tag_len <= bytes.len() {
+        if &bytes[pos..pos + tag_len] == delim {
+            return pos + tag_len;
+        }
+        pos += 1;
+    }
+    bytes.len()
+}
+
+/// Minimal SQL scanner used by the destructive-query detector.
+struct SqlScanner<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> SqlScanner<'a> {
+    fn new(s: &'a str) -> Self {
+        SqlScanner { bytes: s.as_bytes(), pos: 0 }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    fn peek2(&self) -> Option<u8> {
+        self.bytes.get(self.pos + 1).copied()
+    }
+
+    fn advance(&mut self) {
+        self.pos += 1;
+    }
+
+    fn at_word_start(&self) -> bool {
+        matches!(self.peek(), Some(c) if c.is_ascii_alphabetic() || c == b'_')
+    }
+
+    fn skip_comments_ws(&mut self) {
+        loop {
+            match self.peek() {
+                Some(c) if c.is_ascii_whitespace() => self.advance(),
+                Some(b'-') if self.peek2() == Some(b'-') => self.skip_line_comment(),
+                Some(b'/') if self.peek2() == Some(b'*') => self.skip_block_comment(),
+                _ => break,
+            }
+        }
+    }
+
+    fn skip_line_comment(&mut self) {
+        while let Some(c) = self.peek() {
+            if c == b'\n' {
+                return;
+            }
+            self.advance();
+        }
+    }
+
+    fn skip_block_comment(&mut self) {
+        self.advance();
+        self.advance();
+        while self.pos + 1 < self.bytes.len() {
+            if self.peek() == Some(b'*') && self.peek2() == Some(b'/') {
+                self.advance();
+                self.advance();
+                return;
+            }
+            self.advance();
+        }
+        self.pos = self.bytes.len();
+    }
+
+    fn skip_string_literal(&mut self) {
+        match self.peek() {
+            Some(b'\'') => {
+                self.advance();
+                loop {
+                    match self.peek() {
+                        Some(b'\'') if self.peek2() == Some(b'\'') => {
+                            self.advance();
+                            self.advance();
+                        }
+                        Some(b'\'') => {
+                            self.advance();
+                            break;
+                        }
+                        Some(_) => self.advance(),
+                        None => break,
+                    }
+                }
+            }
+            Some(b'"') => {
+                self.advance();
+                loop {
+                    match self.peek() {
+                        Some(b'"') if self.peek2() == Some(b'"') => {
+                            self.advance();
+                            self.advance();
+                        }
+                        Some(b'"') => {
+                            self.advance();
+                            break;
+                        }
+                        Some(_) => self.advance(),
+                        None => break,
+                    }
+                }
+            }
+            Some(b'$') => {
+                if let Some(tag_len) = dollar_tag_len(self.bytes, self.pos) {
+                    self.pos = find_dollar_close(self.bytes, self.pos + tag_len, tag_len);
+                } else {
+                    self.advance();
+                }
+            }
+            _ => self.advance(),
+        }
+    }
+
+    fn read_keyword(&mut self) -> Option<String> {
+        self.skip_comments_ws();
+        if !self.at_word_start() {
+            return None;
+        }
+        let start = self.pos;
+        while let Some(c) = self.peek() {
+            if c.is_ascii_alphanumeric() || c == b'_' {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        Some(String::from_utf8_lossy(&self.bytes[start..self.pos]).to_ascii_lowercase())
+    }
+
+    fn peek_keyword(&mut self) -> Option<String> {
+        let save = self.pos;
+        let kw = self.read_keyword();
+        self.pos = save;
+        kw
+    }
+
+    fn skip_balanced_paren_group(&mut self) -> bool {
+        if self.peek() != Some(b'(') {
+            return false;
+        }
+        self.advance();
+        let mut depth: i32 = 1;
+        while depth > 0 {
+            match self.peek() {
+                Some(b'(') => {
+                    depth += 1;
+                    self.advance();
+                }
+                Some(b')') => {
+                    depth -= 1;
+                    self.advance();
+                }
+                Some(b'\'') | Some(b'"') | Some(b'$') => self.skip_string_literal(),
+                Some(b'-') if self.peek2() == Some(b'-') => self.skip_line_comment(),
+                Some(b'/') if self.peek2() == Some(b'*') => self.skip_block_comment(),
+                Some(_) => self.advance(),
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Positioned right after the `WITH` keyword, skip the `name [cols] AS (body) [, ...]`
+    /// CTE definitions so the scanner sits at the first keyword of the main statement.
+    fn skip_with_clause(&mut self) -> bool {
+        self.skip_comments_ws();
+        if let Some(k) = self.peek_keyword() {
+            if k == "recursive" {
+                self.read_keyword();
+            }
+        }
+        loop {
+            self.skip_comments_ws();
+            match self.read_keyword() {
+                Some(_) => {}
+                None => return false,
+            }
+            self.skip_comments_ws();
+            if self.peek() == Some(b'(') && !self.skip_balanced_paren_group() {
+                return false;
+            }
+            self.skip_comments_ws();
+            match self.read_keyword() {
+                Some(k) if k == "as" => {}
+                _ => return false,
+            }
+            self.skip_comments_ws();
+            if self.peek() != Some(b'(') || !self.skip_balanced_paren_group() {
+                return false;
+            }
+            self.skip_comments_ws();
+            match self.peek() {
+                Some(b',') => self.advance(),
+                Some(_) => return true,
+                None => return false,
+            }
+        }
+    }
+
+    /// First keyword of the statement, transparently skipping a leading `WITH` clause.
+    fn read_statement_keyword(&mut self) -> Option<String> {
+        self.skip_comments_ws();
+        let first = self.read_keyword()?;
+        if first == "with" {
+            if self.skip_with_clause() {
+                self.skip_comments_ws();
+                self.read_keyword()
+            } else {
+                Some(first)
+            }
+        } else {
+            Some(first)
+        }
+    }
+}
+
+/// Called when a statement's first keyword is `explain`. Returns true if the
+/// EXPLAIN will ANALYZE (i.e. actually execute) a destructive statement.
+/// Deliberately fail-safe: anything we cannot parse cleanly is treated as
+/// destructive.
+fn explain_would_execute_destructive(sc: &mut SqlScanner) -> bool {
+    let mut analyze: Option<bool> = None;
+    sc.skip_comments_ws();
+    if sc.peek() == Some(b'(') {
+        sc.advance();
+        let mut depth = 1;
+        while depth > 0 {
+            match sc.peek() {
+                Some(b'(') => {
+                    depth += 1;
+                    sc.advance();
+                }
+                Some(b')') => {
+                    depth -= 1;
+                    sc.advance();
+                }
+                Some(b'\'') | Some(b'"') | Some(b'$') => sc.skip_string_literal(),
+                Some(_) if sc.at_word_start() => {
+                    let kw = sc.read_keyword().unwrap_or_default();
+                    if kw == "analyze" {
+                        sc.skip_comments_ws();
+                        if sc.peek() == Some(b'=') {
+                            sc.advance();
+                            sc.skip_comments_ws();
+                        }
+                        match sc.peek_keyword() {
+                            Some(v) if v == "true" || v == "on" => {
+                                analyze = Some(true);
+                                sc.read_keyword();
+                            }
+                            Some(v) if v == "false" || v == "off" => {
+                                analyze = Some(false);
+                                sc.read_keyword();
+                            }
+                            _ => analyze = Some(true),
+                        }
+                    }
+                }
+                Some(_) => sc.advance(),
+                None => return true,
+            }
+        }
+    } else {
+        loop {
+            sc.skip_comments_ws();
+            match sc.peek_keyword() {
+                Some(k) if k == "analyze" => {
+                    analyze = Some(true);
+                    sc.read_keyword();
+                }
+                Some(k) if k == "verbose" => {
+                    sc.read_keyword();
+                }
+                Some(_) => break,
+                None => break,
+            }
+        }
+    }
+    if analyze != Some(true) {
+        return false;
+    }
+    sc.skip_comments_ws();
+    match sc.read_statement_keyword() {
+        Some(kw) => is_destructive_keyword(&kw),
+        None => true,
+    }
+}
+
 /// Parse one Postgres array literal (e.g. `{1,2,3}` or `{{"a"},{"b"}}`) into a
 /// JSON array. Quoted elements unescape `""`; `NULL` becomes JSON null; bare
 /// integers/floats become JSON numbers; anything else is kept as a string.
@@ -890,6 +1316,59 @@ pub async fn pg_execute_query_params(client: &PgClient, query: &str, params: &[s
     Ok(QueryResult { columns: vec![], rows: vec![], row_count: 0, affected_rows: Some(affected), is_select: false, execution_time_ms: elapsed })
 }
 
+pub async fn pg_mutate(client: &mut PgClient, statements: &[RowMutationStatement]) -> Result<Vec<QueryResult>, String> {
+    if statements.is_empty() {
+        return Ok(Vec::new());
+    }
+    let tx = client.transaction().await.map_err(|e| format!("begin transaction: {}", e))?;
+    let mut results = Vec::with_capacity(statements.len());
+    for stmt in statements {
+        let start = std::time::Instant::now();
+        let bindings: Vec<Box<dyn ToSql + Send + Sync>> = stmt.params.iter().map(json_to_tosql).collect();
+        let bind_refs: Vec<&(dyn ToSql + Sync)> = bindings.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
+        let affected = tokio::time::timeout(std::time::Duration::from_secs(30), tx.execute(&stmt.query, &bind_refs))
+            .await
+            .map_err(|_| "Mutation timed out (30s)".to_string())?
+            .map_err(|e| format!("mutation: {}", e))?;
+        let elapsed = start.elapsed().as_millis() as u64;
+        results.push(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            row_count: 0,
+            affected_rows: Some(affected),
+            is_select: false,
+            execution_time_ms: elapsed,
+        });
+    }
+    tx.commit().await.map_err(|e| format!("commit: {}", e))?;
+    Ok(results)
+}
+
+pub async fn pg_explain(client: &PgClient, query: &str, analyze: bool) -> Result<ExplainResult, String> {
+    if analyze && (is_destructive(query) || !is_select_query(query)) {
+        return Err("EXPLAIN ANALYZE is only allowed on read-only (SELECT/VALUES) queries".into());
+    }
+    let start = std::time::Instant::now();
+    let explain_sql = format!(
+        "EXPLAIN (FORMAT JSON, BUFFERS true, ANALYZE {}) {}",
+        if analyze { "true" } else { "false" },
+        query
+    );
+    let row = tokio::time::timeout(std::time::Duration::from_secs(30), client.query_one(&explain_sql, &[]))
+        .await
+        .map_err(|_| "EXPLAIN timed out (30s)".to_string())?
+        .map_err(|e| format!("explain: {}", e))?;
+    let plan = match row.try_get::<_, serde_json::Value>(0) {
+        Ok(v) => v,
+        Err(_) => {
+            let s: String = row.try_get(0).map_err(|e| format!("explain: {}", e))?;
+            serde_json::from_str(&s).map_err(|e| format!("explain parse: {}", e))?
+        }
+    };
+    let elapsed = start.elapsed().as_millis() as u64;
+    Ok(ExplainResult { plan, execution_time_ms: elapsed })
+}
+
 pub async fn pg_get_enum_values(client: &PgClient, type_name: &str) -> Result<Vec<String>, String> {
     let rows = client
         .query(
@@ -916,5 +1395,28 @@ mod tests {
         let raw = RawBytes::from_sql(&Type::NUMERIC, &wire).unwrap();
         assert_eq!(raw.0, wire);
         assert_eq!(numeric_bytes_to_string(&raw.0).unwrap(), "1");
+    }
+
+    #[test]
+    fn select_detection_covers_read_only_shapes() {
+        assert!(is_select_query("select 1"));
+        assert!(is_select_query("  SHOW search_path"));
+        assert!(is_select_query("explain select 1"));
+        assert!(is_select_query("values (1)"));
+        assert!(!is_select_query("insert into t values (1)"));
+        assert!(!is_select_query(""));
+    }
+
+    #[test]
+    fn destructive_detection_core_cases() {
+        assert!(is_destructive("drop table x"));
+        assert!(is_destructive("UPDATE t SET a = 1"));
+        assert!(is_destructive("/*c*/DELETE FROM t"));
+        assert!(is_destructive("WITH x AS () DELETE FROM t"));
+        assert!(is_destructive("select 1; truncate t"));
+        assert!(!is_destructive("select * from t"));
+        assert!(!is_destructive("with x as (select 1) select * from x"));
+        assert!(!is_destructive("EXPLAIN (ANALYZE false) DELETE FROM t"));
+        assert!(!is_destructive(""));
     }
 }

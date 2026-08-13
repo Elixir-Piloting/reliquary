@@ -42,6 +42,8 @@ pub fn run() {
             commands::get_table_data,
             commands::execute_query,
             commands::execute_query_params,
+            commands::mutate_rows,
+            commands::explain_query,
             commands::get_enum_values,
             commands::detect_local_servers,
             commands::list_local_databases,
