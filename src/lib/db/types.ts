@@ -1,4 +1,4 @@
-import type { Connection } from "@/lib/ipc-client";
+import type { Connection, RowMutationStatement } from "@/lib/ipc-client";
 
 /**
  * A stored connection, mirroring the Rust `StoredConnection` (serde camelCase).
@@ -6,6 +6,8 @@ import type { Connection } from "@/lib/ipc-client";
  * existing consumers keep the `ConnectionConfig` name.
  */
 export type ConnectionConfig = Connection;
+
+export type { RowMutationStatement };
 
 export interface ColumnMeta {
   name: string;

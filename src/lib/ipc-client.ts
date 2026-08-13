@@ -112,6 +112,11 @@ export interface QueryOptions {
   readOnly: boolean;
 }
 
+export interface RowMutationStatement {
+  query: string;
+  params: unknown[];
+}
+
 export interface QueryResult {
   columns: Array<{ name: string; dataType: string }>;
   rows: Record<string, unknown>[];
@@ -263,6 +268,23 @@ const API = {
         ...options,
       },
     });
+  },
+
+  async executeQueryParams(connectionId: string, query: string, params: unknown[], options?: Partial<QueryOptions>): Promise<QueryResult> {
+    return invoke("execute_query_params", {
+      connectionId,
+      query,
+      params,
+      options: {
+        confirmDestructive: false,
+        readOnly: false,
+        ...options,
+      },
+    });
+  },
+
+  async mutateRows(connectionId: string, statements: RowMutationStatement[]): Promise<QueryResult[]> {
+    return invoke("mutate_rows", { connectionId, statements });
   },
 
   async explainQuery(connectionId: string, query: string, analyze: boolean): Promise<ExplainResult> {

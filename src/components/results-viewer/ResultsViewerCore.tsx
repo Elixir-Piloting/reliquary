@@ -6,66 +6,21 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check, Copy, X, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check, Copy, X, Plus, Trash2, FileDown, Download } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult, ResultsViewerProps, PendingChange } from "./types";
 import { PAGE_SIZE_OPTIONS } from "./types";
 import { ReviewChangesSheet } from "./review-changes-sheet";
-
-function escapeSqlValue(value: unknown): string {
-  if (value === null || value === undefined) return 'NULL';
-  const str = String(value);
-  if (/^-?\d+(\.\d+)?$/.test(str)) return str;
-  return `'${str.replace(/'/g, "''")}'`;
-}
-
-function formatValueForInput(value: unknown, inputType: string): string {
-  if (value === null) return '';
-  const str = String(value);
-  if (inputType === 'date') {
-    const m = str.match(/^\d{4}-\d{2}-\d{2}/);
-    return m ? m[0] : str;
-  }
-  if (inputType === 'datetime-local') {
-    const cleaned = str.replace(' ', 'T');
-    return cleaned.length > 16 ? cleaned.substring(0, 16) : cleaned;
-  }
-  return str;
-}
-
-const BUILTIN_TYPES = new Set([
-  'int2','int4','int8','int','integer','smallint','bigint','serial','smallserial','bigserial',
-  'float4','float8','real','float','double precision','numeric','decimal','money',
-  'bool','boolean',
-  'text','varchar','char','character varying','character','bpchar','name',
-  'bytea',
-  'date','time','timetz','timestamp','timestamptz','interval',
-  'uuid','json','jsonb',
-  'inet','cidr','macaddr',
-  'xml','oid',
-  'point','line','lseg','box','path','polygon','circle',
-  'tsvector','tsquery',
-]);
-
-function isPotentialEnum(dataType: string): boolean {
-  const dt = dataType.toLowerCase();
-  if (dt === 'boolean' || dt === 'bool') return false;
-  if (dt.includes('date') || dt.includes('timestamp') || dt.includes('time')) return false;
-  return !BUILTIN_TYPES.has(dt);
-}
-
-function getInputType(dataType: string): string {
-  const dt = dataType.toLowerCase();
-  if (dt === 'boolean' || dt === 'bool') return 'select-boolean';
-  if (dt.includes('date')) return 'date';
-  if (dt.includes('timestamp') || dt.includes('time')) return 'datetime-local';
-  if (isPotentialEnum(dt)) return 'maybe-enum';
-  return 'text';
-}
+import { InsertRowDialog } from "./insert-row-dialog";
+import { ConfirmDialog } from "./confirm-dialog";
+import { getInputType, formatValueForInput, toSqlParamValue } from "./field-types";
+import { toCsv, toJson, downloadText } from "@/lib/export";
+import API, { type RowMutationStatement } from "@/lib/ipc-client";
 
 function getSortOptions(dataType: string): { label: string; direction: 'asc' | 'desc' }[] {
   const dt = dataType?.toLowerCase() || '';
@@ -171,7 +126,7 @@ function ResultsLoadingSkeleton() {
 }
 
 export function ResultsViewer({
-  result, error, loading, schema, table, onRefresh, enableCRUD, connectionId, pkColumns, onAddColumn
+  result, error, loading, schema, table, onRefresh, enableCRUD, readOnly, connectionId, pkColumns, onAddColumn
 }: ResultsViewerProps) {
   const [internalPage, setInternalPage] = useState(1);
   const [internalPageSize, setInternalPageSize] = useState(100);
@@ -190,10 +145,17 @@ export function ResultsViewer({
   const [enumLoading, setEnumLoading] = useState<Record<string, boolean>>({});
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
   const [showReviewSheet, setShowReviewSheet] = useState(false);
+  const [insertDialogOpen, setInsertDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [localRows, setLocalRows] = useState<Record<string, unknown>[] | null>(null);
-  const canEdit = enableCRUD && schema && table && pkColumns && pkColumns.length > 0 && connectionId;
+  const canEdit = enableCRUD && !readOnly && schema && table && pkColumns && pkColumns.length > 0 && connectionId;
   const displayResult = localRows ? { ...result, rows: localRows } : result;
+
+  const exportResult = useMemo(() => displayResult ? {
+    columns: displayResult.columns || [],
+    rows: displayResult.rows,
+  } : null, [displayResult]);
 
   useEffect(() => { setLocalRows(null); }, [result]);
 
@@ -221,11 +183,29 @@ export function ResultsViewer({
     });
   }, [displayResult, sortColumn, sortDirection]);
 
+  const insertRows = useMemo(
+    () => pendingChanges.filter(c => c.op === 'insert').map(c => c.newValue as Record<string, unknown>),
+    [pendingChanges]
+  );
+
+  const pendingDeleteKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const c of pendingChanges) {
+      if (c.op !== 'delete') continue;
+      keys.add(JSON.stringify(c.pkValues));
+    }
+    return keys;
+  }, [pendingChanges]);
+
   const getPkValues = useCallback((row: Record<string, unknown>) => {
     const pks: Record<string, unknown> = {};
     for (const pk of pkColumns || []) if (pk in row) pks[pk] = row[pk];
     return pks;
   }, [pkColumns]);
+
+  const isPendingDelete = useCallback((row: Record<string, unknown>) => {
+    return pendingDeleteKeys.has(JSON.stringify(getPkValues(row)));
+  }, [pendingDeleteKeys, getPkValues]);
 
   const getChangeForCell = useCallback((row: Record<string, unknown>, colName: string): PendingChange | undefined => {
     return pendingChanges.find(c =>
@@ -280,41 +260,113 @@ export function ResultsViewer({
 
   const handleUnstage = (id: string) => setPendingChanges(prev => prev.filter(c => c.id !== id));
 
+  const handleInsertSubmit = (statement: RowMutationStatement, values: Record<string, unknown>) => {
+    if (!schema || !table) return;
+    const change: PendingChange = {
+      id: `insert-${schema}.${table}-${Date.now()}`,
+      schema, table, op: 'insert',
+      columnName: '', dataType: '',
+      pkValues: {}, originalValue: null, newValue: values,
+      statement,
+    };
+    setPendingChanges(prev => [...prev, change]);
+    toast.info("Insert staged — review & apply to commit");
+  };
+
+  const handleDeleteSelected = () => {
+    if (!canEdit || !schema || !table) return;
+    const rows = Array.from(selectedRows).map(i => sortedRows[i]).filter((r): r is Record<string, unknown> => !!r);
+    const changes: PendingChange[] = rows.map((row, idx) => {
+      const pkEntries = Object.entries(getPkValues(row));
+      const whereClause = pkEntries.map(([k], i) => `"${k}" = $${i + 1}`).join(' AND ');
+      return {
+        id: `delete-${schema}.${table}-${Date.now()}-${idx}`,
+        schema, table, op: 'delete',
+        columnName: '', dataType: '',
+        pkValues: getPkValues(row), originalValue: null, newValue: null,
+        statement: {
+          query: `DELETE FROM "${schema}"."${table}" WHERE ${whereClause}`,
+          params: pkEntries.map(([, v]) => v),
+        },
+      };
+    });
+    setPendingChanges(prev => [...prev, ...changes]);
+    setSelectedRows(new Set());
+    setDeleteDialogOpen(false);
+    toast.info(`Staged ${changes.length} delete${changes.length !== 1 ? 's' : ''} — review & apply to commit`);
+  };
+
   const handleApplyAll = async () => {
     if (!connectionId) return;
     setApplying(true);
-    for (const change of pendingChanges) {
-      try {
-        const whereClause = Object.entries(change.pkValues)
-          .map(([k, v]) => `"${k}" = ${escapeSqlValue(v)}`)
-          .join(" AND ");
-        const query = `UPDATE "${change.schema}"."${change.table}" SET "${change.columnName}" = ${escapeSqlValue(change.newValue)} WHERE ${whereClause}`;
-        await invoke("execute_query", { connectionId, query, options: { confirmDestructive: true, readOnly: false } });
-      } catch (e) { console.error("Apply failed:", e); }
+    try {
+      const statements: RowMutationStatement[] = [];
+      for (const change of pendingChanges) {
+        if (change.op === 'insert') {
+          if (change.statement) statements.push(change.statement);
+        } else if (change.op === 'delete') {
+          if (change.statement) statements.push(change.statement);
+        } else {
+          const pkEntries = Object.entries(change.pkValues);
+          const whereClause = pkEntries.map(([k], i) => `"${k}" = $${i + 2}`).join(' AND ');
+          statements.push({
+            query: `UPDATE "${change.schema}"."${change.table}" SET "${change.columnName}" = $1 WHERE ${whereClause}`,
+            params: [toSqlParamValue(String(change.newValue), change.dataType), ...pkEntries.map(([, v]) => v)],
+          });
+        }
+      }
+      if (statements.length === 0) { setApplying(false); return; }
+      await API.mutateRows(connectionId, statements);
+      if (displayResult) {
+        const newRows = displayResult.rows.map(row => {
+          const rowChanges = pendingChanges.filter(c =>
+            c.op !== 'delete' && c.op !== 'insert' &&
+            Object.entries(c.pkValues).every(([k, v]) => row[k] === v)
+          );
+          if (rowChanges.length === 0) return row;
+          const newRow = { ...row };
+          for (const ch of rowChanges) {
+            if (ch.dataType === 'boolean' || ch.dataType === 'bool') {
+              newRow[ch.columnName] = ch.newValue === '' ? null : ch.newValue === 'true';
+            } else if (/^int|float|numeric|decimal|serial|real|double/.test(ch.dataType.toLowerCase())) {
+              newRow[ch.columnName] = ch.newValue === '' ? null : Number(ch.newValue);
+            } else {
+              newRow[ch.columnName] = ch.newValue === '' ? null : ch.newValue;
+            }
+          }
+          return newRow;
+        });
+        setLocalRows(newRows);
+      }
+      toast.success(`Applied ${statements.length} change${statements.length !== 1 ? 's' : ''}`);
+      setPendingChanges([]);
+      setSelectedRows(new Set());
+      setShowReviewSheet(false);
+      if (onRefresh) onRefresh();
+    } catch (e: any) {
+      toast.error("Apply failed", { description: String(e) });
     }
     setApplying(false);
-    if (displayResult) {
-      const newRows = displayResult.rows.map(row => {
-        const rowChanges = pendingChanges.filter(c =>
-          Object.entries(c.pkValues).every(([k, v]) => row[k] === v)
-        );
-        if (rowChanges.length === 0) return row;
-        const newRow = { ...row };
-        for (const ch of rowChanges) {
-          if (ch.dataType === 'boolean' || ch.dataType === 'bool') {
-            newRow[ch.columnName] = ch.newValue === '' ? null : ch.newValue === 'true';
-          } else if (/^int|float|numeric|decimal|serial|real|double/.test(ch.dataType.toLowerCase())) {
-            newRow[ch.columnName] = ch.newValue === '' ? null : Number(ch.newValue);
-          } else {
-            newRow[ch.columnName] = ch.newValue === '' ? null : ch.newValue;
-          }
-        }
-        return newRow;
-      });
-      setLocalRows(newRows);
+  };
+
+  const handleCopyJson = async () => {
+    if (!exportResult) return;
+    try {
+      await navigator.clipboard.writeText(toJson(exportResult));
+      toast.success("Copied as JSON");
+    } catch (e: any) {
+      toast.error("Copy failed", { description: String(e) });
     }
-    setPendingChanges([]);
-    setShowReviewSheet(false);
+  };
+
+  const exportBaseName = schema && table ? `${schema}.${table}` : 'query-result';
+
+  const handleExportCsv = () => {
+    if (exportResult) downloadText(`${exportBaseName}.csv`, toCsv(exportResult), 'text/csv');
+  };
+
+  const handleExportJson = () => {
+    if (exportResult) downloadText(`${exportBaseName}.json`, toJson(exportResult), 'application/json');
   };
 
   if (loading) return <ResultsLoadingSkeleton />;
@@ -329,6 +381,7 @@ export function ResultsViewer({
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const paginatedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
+  const rowsToShow = [...paginatedRows, ...insertRows];
   const startRow = (page - 1) * pageSize + 1;
   const endRow = Math.min(page * pageSize, sortedRows.length);
 
@@ -344,6 +397,23 @@ export function ResultsViewer({
 
   return (
     <div className="flex flex-col h-full">
+      <div className="shrink-0 border-b border-border bg-card/80 backdrop-blur-sm px-4 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5" onClick={handleCopyJson}><Copy className="h-3.5 w-3.5" />Copy as JSON</Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5" onClick={handleExportCsv}><FileDown className="h-3.5 w-3.5" />Export CSV</Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5" onClick={handleExportJson}><Download className="h-3.5 w-3.5" />Export JSON</Button>
+          </div>
+          {canEdit && (
+            <div className="flex items-center gap-1.5">
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setInsertDialogOpen(true)}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10" disabled={selectedRows.size === 0} onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="h-3.5 w-3.5" />Delete Selected ({selectedRows.size})
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
       <div className="flex-1 overflow-auto">
         <Table className="min-w-max">
             <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
@@ -401,11 +471,13 @@ export function ResultsViewer({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {paginatedRows.map((row, rowIndex) => {
+            {rowsToShow.map((row, rowIndex) => {
               const actualIndex = (page - 1) * pageSize + rowIndex;
+              const isStagedInsert = rowIndex >= paginatedRows.length;
               const isSelected = selectedRows.has(actualIndex);
+              const pendingDelete = isPendingDelete(row);
               return (
-                <TableRow key={actualIndex} className="hover:bg-transparent" data-state={isSelected ? "selected" : undefined}>
+                <TableRow key={`${isStagedInsert ? 'ins' : 'row'}-${actualIndex}`} className={cn("hover:bg-transparent", pendingDelete && "opacity-40", isStagedInsert && "bg-emerald-500/5")} data-state={isSelected ? "selected" : undefined}>
                   <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
                   {(displayResult.columns || []).map((field, colIdx) => {
                     const value = row[field.name]; const isNull = value === null;
@@ -417,9 +489,9 @@ export function ResultsViewer({
                     const inputType = getInputType(field.dataType);
                     const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
                     return (<TableCell key={field.name}
-                      className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500")}
+                      className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
                       style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
-                      onDoubleClick={(e) => { e.stopPropagation(); handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
+                      onDoubleClick={(e) => { e.stopPropagation(); if (!pendingDelete) handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
                       onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); copyCell(value); }} title={showNull ? "NULL" : String(displayValue)}>
                       {isEditing ? (inputType === 'select-boolean' ? (
                         <InlineSelect
@@ -500,6 +572,25 @@ export function ResultsViewer({
       {canEdit && (
         <ReviewChangesSheet open={showReviewSheet} onOpenChange={setShowReviewSheet}
           changes={pendingChanges} onUnstage={handleUnstage} onApplyAll={handleApplyAll} applying={applying} />
+      )}
+      {canEdit && displayResult && (
+        <InsertRowDialog
+          open={insertDialogOpen} onOpenChange={setInsertDialogOpen}
+          connectionId={connectionId || ''} schema={schema || ''} table={table || ''}
+          columns={(displayResult.columns || []).map(c => ({ name: c.name, dataType: c.dataType }))}
+          pkColumns={pkColumns || []}
+          onSubmit={handleInsertSubmit}
+        />
+      )}
+      {canEdit && (
+        <ConfirmDialog
+          open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}
+          title={`Delete ${selectedRows.size} Row${selectedRows.size !== 1 ? 's' : ''}`}
+          description={`This will DELETE ${selectedRows.size} row${selectedRows.size !== 1 ? 's' : ''} from ${schema}.${table}. Deletion is staged with your other changes and committed atomically via Apply.`}
+          confirmLabel="Stage Delete"
+          destructive
+          onConfirm={handleDeleteSelected}
+        />
       )}
     </div>
   );

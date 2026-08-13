@@ -56,8 +56,16 @@ export default function DatabaseView() {
   const [pageSize, setPageSize] = useState(100);
   const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
   const [pkColumns, setPkColumns] = useState<Record<string, string[]>>({});
+  const [readOnly, setReadOnly] = useState(false);
 
   const activeTab = tableTabs.find(t => t.id === activeTabId);
+
+  useEffect(() => {
+    if (!connectionId) return;
+    API.getConnectionInfo(connectionId)
+      .then(info => setReadOnly(!!info.readOnly))
+      .catch(() => setReadOnly(false));
+  }, [connectionId]);
 
   useEffect(() => {
     if (connectionId) Persistence.setTableTabs(connectionId, tableTabs);
@@ -228,7 +236,7 @@ export default function DatabaseView() {
                     schema={activeTab.schema} table={activeTab.table}
                     onRefresh={fetchData}
                     connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
-                    enableCRUD={true}
+                    enableCRUD={true} readOnly={readOnly}
                     onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)} />
                 </div>
               </div>

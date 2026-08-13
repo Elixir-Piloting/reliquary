@@ -1,4 +1,4 @@
-import type { QueryResult as DBQueryResult } from "@/lib/db/types";
+import type { QueryResult as DBQueryResult, RowMutationStatement } from "@/lib/db/types";
 
 export type QueryResult = DBQueryResult;
 
@@ -10,6 +10,7 @@ export interface ResultsViewerProps {
   table?: string;
   onRefresh?: () => void;
   enableCRUD?: boolean;
+  readOnly?: boolean;
   page?: number;
   pageSize?: number;
   onPageChange?: (page: number) => void;
@@ -20,15 +21,19 @@ export interface ResultsViewerProps {
   onAddColumn?: () => void;
 }
 
+export type PendingChangeOp = "update" | "insert" | "delete";
+
 export interface PendingChange {
   id: string;
   schema: string;
   table: string;
+  op?: PendingChangeOp;
   columnName: string;
   dataType: string;
   pkValues: Record<string, unknown>;
   originalValue: unknown;
   newValue: unknown;
+  statement?: RowMutationStatement;
 }
 
 export const ITEMS_PER_PAGE = 500;
