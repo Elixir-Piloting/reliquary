@@ -108,7 +108,7 @@ pub async fn connect(connection_id: String, url: String, read_only: bool, state:
             let ro_suffix = if read_only { " (read-only)" } else { "" };
             state.connections.lock().await.insert(
                 connection_id.clone(),
-                ActiveConnection { pool: Arc::new(pool), read_only },
+                ActiveConnection { pool: Arc::new(pool), read_only, url: url.clone() },
             );
             Ok(format!("Connected to PostgreSQL: {}{}{}", ver, ro_suffix, hint))
         }
@@ -128,6 +128,15 @@ pub async fn is_connected(connection_id: String, state: tauri::State<'_, AppStat
     Ok(state.connections.lock().await.contains_key(&connection_id))
 }
 
+#[tauri::command]
+pub async fn get_connection_info(connection_id: String, state: tauri::State<'_, AppState>) -> Result<ConnectionInfo, String> {
+    let guard = state.connections.lock().await;
+    let url = conn_url(&guard, &connection_id)?;
+    let read_only = conn_read_only(&guard, &connection_id)?;
+    let client = pg_client(&guard, &connection_id).await?;
+    pg::pg_connection_info(&client, &url, read_only).await
+}
+
 async fn pg_client(guard: &HashMap<String, ActiveConnection>, id: &str) -> Result<deadpool_postgres::Object, String> {
     let ac = guard.get(id).ok_or_else(|| "Not connected".to_string())?;
     ac.pool.get().await.map_err(|e| format!("No connection available: {}", e))
@@ -135,6 +144,10 @@ async fn pg_client(guard: &HashMap<String, ActiveConnection>, id: &str) -> Resul
 
 fn conn_read_only(guard: &HashMap<String, ActiveConnection>, id: &str) -> Result<bool, String> {
     guard.get(id).map(|ac| ac.read_only).ok_or_else(|| "Not connected".to_string())
+}
+
+fn conn_url(guard: &HashMap<String, ActiveConnection>, id: &str) -> Result<String, String> {
+    guard.get(id).map(|ac| ac.url.clone()).ok_or_else(|| "Not connected".to_string())
 }
 
 fn pooled_endpoint_hint(url: &str, port: &str) -> &'static str {

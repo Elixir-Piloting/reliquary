@@ -1555,6 +1555,82 @@ pub async fn pg_get_enum_values(client: &PgClient, type_name: &str) -> Result<Ve
     Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
 }
 
+/// Gather connection metadata for a live client.
+///
+/// Provider is detected from the URL hostname via `detect_provider`, but
+/// schema-presence detection can *force* `is_supabase`: if any of Supabase's
+/// characteristic schemas (`auth`, `storage`, `realtime`,
+/// `supabase_functions`, `graphql`) exists, `is_supabase` is set to true
+/// regardless of what the hostname said. This closes the gap where a Supabase
+/// project is reached through a hostname that does not match, or where a
+/// rehosted/self-hosted Supabase-style install would otherwise go undetected.
+/// `provider` itself stays as the hostname-based guess (informational only).
+///
+/// `pooled_endpoint`: true when the parsed port is `6543` (Supabase pooler
+/// port) or the URL host contains the `-pooler` substring (Neon/Supabase
+/// pooler hostnames). Note this is intentionally broader than the
+/// per-provider hint in `commands::pooled_endpoint_hint` (Task 3), which
+/// gates the `pooler` substring per provider — see the task report.
+///
+/// `server_version` is extracted from `version()` as `PostgreSQL <major.minor>`
+/// (the first two whitespace tokens), falling back to the full string when the
+/// string does not begin with `PostgreSQL`.
+pub async fn pg_connection_info(client: &PgClient, url: &str, read_only: bool) -> Result<ConnectionInfo, String> {
+    let parts = parse_pg_url(url)?;
+    let provider = detect_provider(url).to_string();
+    let mut is_supabase = provider == "supabase";
+    let is_neon = provider == "neon";
+
+    let row = client
+        .query_one("SELECT current_database(), current_user, version()", &[])
+        .await
+        .map_err(|e| format!("connection_info: {}", e))?;
+    let database: String = row.get(0);
+    let user: String = row.get(1);
+    let version_full: String = row.get(2);
+    let server_version = {
+        let mut words = version_full.split_whitespace();
+        match (words.next(), words.next()) {
+            (Some(kind), Some(ver)) if kind.eq_ignore_ascii_case("postgresql") => {
+                format!("{} {}", kind, ver)
+            }
+            _ => version_full,
+        }
+    };
+
+    let schema_rows = client
+        .query(
+            "SELECT schema_name FROM information_schema.schemata \
+             WHERE schema_name IN ('auth','storage','realtime','supabase_functions','graphql') \
+             ORDER BY schema_name",
+            &[],
+        )
+        .await
+        .map_err(|e| format!("connection_info schemas: {}", e))?;
+    let supabase_schemas: Vec<String> = schema_rows.iter().map(|r| r.get::<_, String>(0)).collect();
+    if !supabase_schemas.is_empty() {
+        is_supabase = true;
+    }
+
+    let lower = url.to_lowercase();
+    let pooled_endpoint = parts.port == "6543" || lower.contains("-pooler");
+
+    Ok(ConnectionInfo {
+        provider,
+        host: parts.host.clone(),
+        port: parts.port.clone(),
+        database,
+        user,
+        server_version,
+        sslmode: parts.sslmode.clone(),
+        is_supabase,
+        is_neon,
+        supabase_schemas,
+        read_only,
+        pooled_endpoint,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1747,5 +1823,36 @@ mod tests {
         let j = serde_json::to_value(&t).unwrap();
         assert_eq!(j["tableName"], "t");
         assert_eq!(j["hasRls"], true);
+    }
+
+    #[test]
+    fn connection_info_serializes_camel_case() {
+        let ci = ConnectionInfo {
+            provider: "supabase".into(),
+            host: "db.example.supabase.co".into(),
+            port: "6543".into(),
+            database: "postgres".into(),
+            user: "postgres".into(),
+            server_version: "PostgreSQL 16.1".into(),
+            sslmode: "require".into(),
+            is_supabase: true,
+            is_neon: false,
+            supabase_schemas: vec!["auth".into(), "storage".into()],
+            read_only: false,
+            pooled_endpoint: true,
+        };
+        let j = serde_json::to_value(&ci).unwrap();
+        assert_eq!(j["provider"], "supabase");
+        assert_eq!(j["host"], "db.example.supabase.co");
+        assert_eq!(j["port"], "6543");
+        assert_eq!(j["database"], "postgres");
+        assert_eq!(j["user"], "postgres");
+        assert_eq!(j["serverVersion"], "PostgreSQL 16.1");
+        assert_eq!(j["sslmode"], "require");
+        assert_eq!(j["isSupabase"], true);
+        assert_eq!(j["isNeon"], false);
+        assert_eq!(j["supabaseSchemas"], serde_json::json!(["auth", "storage"]));
+        assert_eq!(j["readOnly"], false);
+        assert_eq!(j["pooledEndpoint"], true);
     }
 }

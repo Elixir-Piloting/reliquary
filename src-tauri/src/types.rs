@@ -219,6 +219,23 @@ pub struct LocalPgDatabase {
     pub size: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionInfo {
+    pub provider: String,
+    pub host: String,
+    pub port: String,
+    pub database: String,
+    pub user: String,
+    pub server_version: String,
+    pub sslmode: String,
+    pub is_supabase: bool,
+    pub is_neon: bool,
+    pub supabase_schemas: Vec<String>,
+    pub read_only: bool,
+    pub pooled_endpoint: bool,
+}
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -226,6 +243,7 @@ pub struct LocalPgDatabase {
 pub struct ActiveConnection {
     pub pool: Arc<deadpool_postgres::Pool>,
     pub read_only: bool,
+    pub url: String,
 }
 
 pub struct AppState {

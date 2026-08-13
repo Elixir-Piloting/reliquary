@@ -139,6 +139,21 @@ export interface TestConnectionResult {
   server_version?: string;
 }
 
+export interface ConnectionInfo {
+  provider: string;
+  host: string;
+  port: string;
+  database: string;
+  user: string;
+  serverVersion: string;
+  sslmode: string;
+  isSupabase: boolean;
+  isNeon: boolean;
+  supabaseSchemas: string[];
+  readOnly: boolean;
+  pooledEndpoint: boolean;
+}
+
 function getConnectionId(): string {
   if (typeof window === "undefined") return "";
   const stored = localStorage.getItem("relic_active_connection");
@@ -172,6 +187,9 @@ const API = {
   },
   async isConnected(connectionId: string): Promise<boolean> {
     return invoke("is_connected", { connectionId });
+  },
+  async getConnectionInfo(connectionId: string): Promise<ConnectionInfo> {
+    return invoke("get_connection_info", { connectionId });
   },
 
   // Schema introspection

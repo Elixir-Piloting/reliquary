@@ -32,6 +32,7 @@ pub fn run() {
             commands::connect,
             commands::disconnect,
             commands::is_connected,
+            commands::get_connection_info,
             commands::get_schemas,
             commands::get_tables,
             commands::get_columns,
