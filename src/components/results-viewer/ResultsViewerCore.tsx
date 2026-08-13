@@ -157,7 +157,7 @@ export function ResultsViewer({
     rows: displayResult.rows,
   } : null, [displayResult]);
 
-  useEffect(() => { setLocalRows(null); }, [result]);
+  useEffect(() => { setLocalRows(null); setPage(1); setSelectedRows(new Set()); }, [result]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -586,7 +586,7 @@ export function ResultsViewer({
       ) : (
         <div className="w-full border border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-md p-4">
           <div className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 shrink-0" />
-            <span>This table contains no rows</span>
+            <span>{schema && table ? "This table contains no rows" : "Query returned no rows"}</span>
           </div>
         </div>
       )}
