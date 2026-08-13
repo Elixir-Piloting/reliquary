@@ -124,6 +124,41 @@ fn connstr_has_expected_shape() {
 }
 
 // ---------------------------------------------------------------------------
+// connstr sslmode normalization (tokio-postgres Config only accepts
+// disable/prefer/require; verify-* must be normalized to require)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn connstr_round_trips_all_tls_sslmode_values() {
+    for mode in ["require", "prefer", "verify-ca", "verify-full"] {
+        let connstr = parse_pg_connstr(&url(&format!("user:pass@host:5432/db?sslmode={}", mode))).unwrap();
+        connstr
+            .parse::<tokio_postgres::Config>()
+            .unwrap_or_else(|e| {
+                panic!("sslmode={} rejected by tokio-postgres Config: {} (connstr: {})", mode, e, connstr)
+            });
+    }
+}
+
+#[test]
+fn connstr_normalizes_verify_ca_to_require() {
+    let connstr = parse_pg_connstr(&url("user:pass@host:5432/db?sslmode=verify-ca")).unwrap();
+    assert!(connstr.contains("sslmode=require"), "got: {}", connstr);
+}
+
+#[test]
+fn connstr_normalizes_verify_full_to_require() {
+    let connstr = parse_pg_connstr(&url("user:pass@host:5432/db?sslmode=verify-full")).unwrap();
+    assert!(connstr.contains("sslmode=require"), "got: {}", connstr);
+}
+
+#[test]
+fn connstr_keeps_require_sslmode() {
+    let connstr = parse_pg_connstr(&url("user:pass@host:5432/db?sslmode=require")).unwrap();
+    assert!(connstr.contains("sslmode=require"), "got: {}", connstr);
+}
+
+// ---------------------------------------------------------------------------
 // detect_provider
 // ---------------------------------------------------------------------------
 

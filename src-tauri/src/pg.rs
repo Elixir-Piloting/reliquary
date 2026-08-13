@@ -128,9 +128,22 @@ pub fn parse_pg_connstr(url: &str) -> Result<String, String> {
     if !parts.password.is_empty() {
         s.push_str(&format!(" password={}", parts.password));
     }
-    s.push_str(&format!(" sslmode={}", parts.sslmode));
+    s.push_str(&format!(" sslmode={}", normalize_conn_sslmode(&parts.sslmode)));
     s.push_str(" connect_timeout=5");
     Ok(s)
+}
+
+/// Map a parsed sslmode to a value tokio-postgres's `Config` parser accepts.
+///
+/// tokio-postgres 0.7 only understands `disable`/`prefer`/`require`. The
+/// `verify-ca`/`verify-full` policies are enforced by the `native_tls`
+/// connector built in `build_tls` (which keeps certificate verification on for
+/// those modes), so the conn string can safely carry `require`.
+fn normalize_conn_sslmode(sslmode: &str) -> &str {
+    match sslmode {
+        "verify-ca" | "verify-full" => "require",
+        other => other,
+    }
 }
 
 // ---------------------------------------------------------------------------
