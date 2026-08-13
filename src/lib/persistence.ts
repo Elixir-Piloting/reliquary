@@ -83,6 +83,29 @@ export const Persistence = {
     this.setQueryTabs(connectionId, tabs.map(t => t.id === tabId ? { ...t, query } : t));
   },
 
+  getQueryHistory(connectionId: string): string[] {
+    if (typeof window === "undefined") return [];
+    try {
+      const stored = localStorage.getItem(`${STORAGE_PREFIX}query_history_${connectionId}`);
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+    } catch { return []; }
+  },
+
+  addQueryToHistory(connectionId: string, query: string): void {
+    if (typeof window === "undefined") return;
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    const deduped = this.getQueryHistory(connectionId).filter(q => q !== trimmed);
+    deduped.unshift(trimmed);
+    localStorage.setItem(`${STORAGE_PREFIX}query_history_${connectionId}`, JSON.stringify(deduped.slice(0, 50)));
+  },
+
+  clearQueryHistory(connectionId: string): void {
+    if (typeof window === "undefined") return;
+    localStorage.removeItem(`${STORAGE_PREFIX}query_history_${connectionId}`);
+  },
+
   getSafeMode(connectionId: string): boolean {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem(`${STORAGE_PREFIX}safe_mode_${connectionId}`);

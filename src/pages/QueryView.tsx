@@ -8,11 +8,16 @@ import { ResultsViewer } from "@/components/results-viewer";
 import { QueryTabs, type QueryTab } from "@/components/query-tabs";
 import { SafeModeToggle } from "@/components/safe-mode-toggle";
 import { QueryConfirmationDialog } from "@/components/query-confirmation-dialog";
+import { QueryHistory } from "@/components/query-history";
+import { ExplainViewer } from "@/components/explain-viewer";
 import { Button } from "@/components/ui/button";
 import { Persistence } from "@/lib/persistence";
+import API, { type ExplainResult } from "@/lib/ipc-client";
+import { useSchemas } from "@/lib/query/hooks/use-schemas";
 import type { QueryResult } from "@/lib/db/types";
-import { Play, Plus, Loader2 } from "lucide-react";
+import { Play, Plus, Loader2, FlaskConical, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { cn } from "@/lib/utils";
 
 function generateTabId() { return "q-" + Date.now(); }
 
@@ -26,6 +31,13 @@ export default function QueryView() {
   const [safeMode, setSafeMode] = useState(true);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<string | null>(null);
+  const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
+  const [explainError, setExplainError] = useState<string | null>(null);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [analyze, setAnalyze] = useState(false);
+
+  const schemasQuery = useSchemas(connectionId || "");
+  const schemas = (schemasQuery.data || []).map(s => s.schemaName);
 
   useEffect(() => {
     if (connectionId) Persistence.setQueryTabs(connectionId, queryTabs);
@@ -56,12 +68,19 @@ export default function QueryView() {
     setQueryTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, query: newQuery } : t));
   }, [activeTabId]);
 
+  const clearExplain = () => {
+    setExplainResult(null);
+    setExplainError(null);
+    setExplainLoading(false);
+  };
+
   const executeQuery = async (q?: string, confirmed = false) => {
     const query = q || currentQuery;
     if (!query.trim() || !connectionId) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    clearExplain();
     try {
       const res = await invoke<QueryResult>("execute_query", {
         connectionId,
@@ -72,10 +91,27 @@ export default function QueryView() {
         },
       });
       setResult(res);
+      Persistence.addQueryToHistory(connectionId, query);
     } catch (e: any) {
       setError(String(e));
     }
     setLoading(false);
+  };
+
+  const runExplain = async () => {
+    if (!connectionId || !currentQuery.trim()) return;
+    setExplainLoading(true);
+    setExplainError(null);
+    setExplainResult(null);
+    setResult(null);
+    setError(null);
+    try {
+      const res = await API.explainQuery(connectionId, currentQuery, analyze);
+      setExplainResult(res);
+    } catch (e: any) {
+      setExplainError(String(e));
+    }
+    setExplainLoading(false);
   };
 
   const handleExecute = () => {
@@ -116,6 +152,8 @@ export default function QueryView() {
     setQueryTabs(prev => prev.map(t => t.id === tabId ? { ...t, label: newLabel } : t));
   };
 
+  const showingExplain = explainResult !== null || explainError !== null || explainLoading;
+
   return (
     <MainLayout>
       <div className="flex flex-col h-full">
@@ -129,14 +167,52 @@ export default function QueryView() {
             </Button>
             <span className="text-xs text-muted-foreground">Ctrl/Cmd + Enter</span>
             <div className="flex-1" />
+            {connectionId && <QueryHistory connectionId={connectionId} onSelect={updateQuery} />}
+            <Button variant="outline" size="sm" onClick={runExplain} disabled={explainLoading || !currentQuery.trim()} title="EXPLAIN (FORMAT JSON) the current query">
+              {explainLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FlaskConical className="h-4 w-4 mr-2" />}
+              Explain
+            </Button>
+            <Button variant={analyze ? "default" : "outline"} size="sm" onClick={() => setAnalyze(!analyze)}
+              className={cn(analyze && "bg-green-600 hover:bg-green-700")} title="Run EXPLAIN ANALYZE (executes the query — read-only queries only)">
+              Analyze
+            </Button>
             <SafeModeToggle enabled={safeMode} onToggle={setSafeMode} />
             <Button variant="ghost" size="sm" onClick={addTab}><Plus className="h-4 w-4" /></Button>
           </div>
           <div className="flex-1 min-h-0">
-            <SQLEditor value={currentQuery} onChange={updateQuery} onExecute={handleExecute} />
+            <SQLEditor value={currentQuery} onChange={updateQuery} onExecute={handleExecute}
+              connectionId={connectionId} schemas={schemas}
+              getTables={schema => API.getTables(connectionId || "", schema).then(ts => ts.map(t => t.tableName))}
+              getColumns={(schema, table) => API.getColumns(connectionId || "", schema, table).then(cs => cs.map(c => c.columnName))} />
           </div>
           <div className="h-96 border-t border-border shrink-0">
-            <ResultsViewer result={result} error={error} loading={loading} />
+            {showingExplain ? (
+              <>
+                <div className="flex h-8 items-center gap-2 border-b border-border bg-muted/20 px-3">
+                  <span className="text-xs text-muted-foreground">
+                    {explainLoading ? "Running EXPLAIN…" : analyze ? "EXPLAIN ANALYZE" : "EXPLAIN"}
+                  </span>
+                  <div className="flex-1" />
+                  <button onClick={clearExplain} className="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground" title="Back to results">
+                    <X className="h-3 w-3" /> Close
+                  </button>
+                </div>
+                {explainLoading ? (
+                  <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Running EXPLAIN…
+                  </div>
+                ) : explainError ? (
+                  <div className="p-4 text-sm text-destructive bg-destructive/10 rounded-md">
+                    <div className="font-medium mb-1">Error</div>
+                    <div className="font-mono text-xs">{explainError}</div>
+                  </div>
+                ) : explainResult ? (
+                  <ExplainViewer plan={explainResult.plan} executionTimeMs={explainResult.executionTimeMs} />
+                ) : null}
+              </>
+            ) : (
+              <ResultsViewer result={result} error={error} loading={loading} />
+            )}
           </div>
         </div>
       </div>

@@ -121,6 +121,11 @@ export interface QueryResult {
   executionTimeMs: number;
 }
 
+export interface ExplainResult {
+  plan: unknown;
+  executionTimeMs: number;
+}
+
 export interface LocalPgServer {
   key: string;
   host: string;
@@ -258,6 +263,10 @@ const API = {
         ...options,
       },
     });
+  },
+
+  async explainQuery(connectionId: string, query: string, analyze: boolean): Promise<ExplainResult> {
+    return invoke("explain_query", { connectionId, query, analyze });
   },
 
   // Neon branches
