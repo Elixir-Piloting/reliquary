@@ -568,7 +568,10 @@ pub fn pg_value(row: &tokio_postgres::Row, i: usize) -> serde_json::Value {
         "float4" => row.try_get::<_, Option<f32>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
         "float8" => row.try_get::<_, Option<f64>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
         "bool" => row.try_get::<_, Option<bool>>(i).ok().flatten().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
-        "numeric" => row.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
+        "numeric" => row.try_get::<_, Option<Vec<u8>>>(i).ok().flatten()
+            .and_then(|b| numeric_bytes_to_string(&b).ok())
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
         "json" | "jsonb" => row.try_get::<_, Option<serde_json::Value>>(i).ok().flatten().unwrap_or(serde_json::Value::Null),
         "bytea" => match row.try_get::<_, Option<Vec<u8>>>(i) {
             Ok(Some(bytes)) => serde_json::Value::String(format!("\\x{}", bytes_to_hex(&bytes))),
@@ -617,10 +620,96 @@ fn pg_array_value(row: &tokio_postgres::Row, i: usize, type_name: &str) -> serde
         "bytea" => row.try_get::<_, Option<Vec<Option<Vec<u8>>>>>(i).ok().flatten()
             .map(|v| collect(v.into_iter().map(|x| x.map(|b| serde_json::Value::String(format!("\\x{}", bytes_to_hex(&b))))).collect()))
             .unwrap_or(serde_json::Value::Null),
+        "numeric" => row.try_get::<_, Option<Vec<Option<Vec<u8>>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.and_then(|b| numeric_bytes_to_string(&b).ok()).map(serde_json::Value::String)).collect()))
+            .unwrap_or(serde_json::Value::Null),
         _ => row.try_get::<_, Option<Vec<Option<String>>>>(i).ok().flatten()
             .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::String)).collect()))
             .unwrap_or(serde_json::Value::Null),
     }
+}
+
+/// Decode a Postgres `NUMERIC` value from its binary wire format into a decimal
+/// string. Wire layout (network byte order, as written by PostgreSQL's
+/// `numeric_send`): `int16 ndigits; int16 weight; int16 sign; int16 dscale;
+/// int16 digits[ndigits]`. Sign: `0x0000` positive, `0x4000` negative,
+/// `0xC000` NaN, `0xD000` +Infinity, `0xF000` -Infinity. Each base-10000 digit
+/// group holds four decimal digits.
+pub fn numeric_bytes_to_string(b: &[u8]) -> Result<String, ()> {
+    if b.len() < 8 {
+        return Err(());
+    }
+    let rd_u16 = |off: usize| u16::from_be_bytes([b[off], b[off + 1]]);
+    let rd_i16 = |off: usize| i16::from_be_bytes([b[off], b[off + 1]]);
+    let ndigits = rd_u16(0) as usize;
+    let weight = rd_i16(2);
+    let sign = rd_u16(4);
+    let dscale = rd_u16(6) as usize;
+    if b.len() < 8 + ndigits * 2 {
+        return Err(());
+    }
+    let digits: Vec<u16> = (0..ndigits).map(|i| rd_u16(8 + i * 2)).collect();
+    let negative = match sign {
+        0x0000 => false,
+        0x4000 => true,
+        0xC000 => return Ok("NaN".to_string()),
+        0xD000 => return Ok("Infinity".to_string()),
+        0xF000 => return Ok("-Infinity".to_string()),
+        _ => return Err(()),
+    };
+    if ndigits == 0 {
+        return Ok("0".to_string());
+    }
+    // Number of base-10000 digit groups left of the decimal point = weight + 1.
+    let ipos = weight as i32 + 1;
+    let mut int_str = String::new();
+    let mut frac_digits = String::new();
+    if ipos > 0 {
+        let mut idx = 0usize;
+        let mut remaining = ipos as usize;
+        while idx < ndigits && remaining > 0 {
+            if idx == 0 {
+                int_str.push_str(&digits[idx].to_string());
+            } else {
+                int_str.push_str(&format!("{:04}", digits[idx]));
+            }
+            idx += 1;
+            remaining -= 1;
+        }
+        while remaining > 0 {
+            int_str.push_str("0000");
+            remaining -= 1;
+        }
+        while idx < ndigits {
+            frac_digits.push_str(&format!("{:04}", digits[idx]));
+            idx += 1;
+        }
+    } else {
+        int_str.push('0');
+        for _ in 0..(-ipos) as usize {
+            frac_digits.push_str("0000");
+        }
+        for d in &digits {
+            frac_digits.push_str(&format!("{:04}", d));
+        }
+    }
+    if dscale > 0 {
+        if frac_digits.len() > dscale {
+            frac_digits.truncate(dscale);
+        }
+        while frac_digits.len() < dscale {
+            frac_digits.push('0');
+        }
+    }
+    let mut out = int_str;
+    if dscale > 0 {
+        out.push('.');
+        out.push_str(&frac_digits);
+    }
+    if negative && out != "0" {
+        out.insert(0, '-');
+    }
+    Ok(out)
 }
 
 /// Format raw bytes as Postgres's `\x…` hex representation.
@@ -690,11 +779,11 @@ fn parse_literal_element(s: &str, pos: &mut usize) -> serde_json::Value {
         Some(&b'{') => parse_array_literal(s, pos),
         Some(&b'"') => {
             *pos += 1;
-            let mut out = String::new();
+            let mut out = Vec::new();
             loop {
                 match bytes.get(*pos) {
                     Some(&b'"') if bytes.get(*pos + 1) == Some(&b'"') => {
-                        out.push('"');
+                        out.push(b'"');
                         *pos += 2;
                     }
                     Some(&b'"') => {
@@ -702,13 +791,13 @@ fn parse_literal_element(s: &str, pos: &mut usize) -> serde_json::Value {
                         break;
                     }
                     Some(&c) => {
-                        out.push(c as char);
+                        out.push(c);
                         *pos += 1;
                     }
                     None => break,
                 }
             }
-            serde_json::Value::String(out)
+            serde_json::Value::String(String::from_utf8(out).expect("quoted array literal is valid UTF-8"))
         }
         _ => {
             let start = *pos;
