@@ -2,6 +2,7 @@
 import { useRef, useState, useEffect } from "react";
 import Editor from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
+import { onBranchSwitched } from "@/lib/branch-events";
 
 interface SQLEditorProps {
   value: string;
@@ -98,6 +99,13 @@ async function fetchColumnsForTable(connectionId: string, schema: string, table:
 }
 
 const TABLE_REF_RE = /(?:from|join|update|into|table|references)\s+[`"]?([A-Za-z_][\w$]*)[`"]?(?:\.([A-Za-z_][\w$]*))?/gi;
+
+function clearCompletionCaches(connectionId: string) {
+  tableCache.delete(connectionId);
+  tableInflight.delete(connectionId);
+  columnCache.delete(connectionId);
+  columnInflight.delete(connectionId);
+}
 
 function collectReferencedTables(model: editor.ITextModel): { schema: string; table: string }[] {
   const refs: { schema: string; table: string }[] = [];
@@ -247,6 +255,13 @@ export function SQLEditor({
     if (!editorMonaco || language !== "sql") return;
     registerCompletionProvider(editorMonaco);
   }, [editorMonaco, language]);
+
+  // A Neon branch switch changes the database behind the same connection id, so
+  // the per-connection table/column completion caches must be dropped.
+  useEffect(() => {
+    if (!connectionId) return;
+    return onBranchSwitched(() => clearCompletionCaches(connectionId));
+  }, [connectionId]);
 
   useEffect(() => {
     const editor = editorRef.current;
