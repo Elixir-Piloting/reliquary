@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio_postgres::Client as PgClient;
 
 // ---------------------------------------------------------------------------
 // Storage types
@@ -150,7 +149,7 @@ pub struct LocalPgDatabase {
 // ---------------------------------------------------------------------------
 
 pub struct AppState {
-    pub connections: tokio::sync::Mutex<HashMap<String, Arc<PgClient>>>,
+    pub connections: tokio::sync::Mutex<HashMap<String, Arc<deadpool_postgres::Pool>>>,
     pub config_path: PathBuf,
 }
 
