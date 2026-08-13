@@ -171,7 +171,7 @@ function ResultsLoadingSkeleton() {
 }
 
 export function ResultsViewer({
-  result, error, loading, schema, table, onRefresh, enableCRUD, provider, connectionId, pkColumns, onAddColumn
+  result, error, loading, schema, table, onRefresh, enableCRUD, connectionId, pkColumns, onAddColumn
 }: ResultsViewerProps) {
   const [internalPage, setInternalPage] = useState(1);
   const [internalPageSize, setInternalPageSize] = useState(100);

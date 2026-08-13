@@ -10,7 +10,6 @@ import { Persistence } from "@/lib/persistence";
 import { useLocalServers, useLocalPgDatabases } from "@/lib/query/hooks/use-local-pg-servers";
 import type { LocalPgDatabase } from "@/lib/ipc-client";
 import type { ConnectionConfig } from "@/lib/db/types";
-import { DatabaseProvider } from "@/lib/db/providers";
 import type { LocalPostgresServer, LocalPostgresManagerProps } from "./types";
 import { ServerList } from "./ServerList";
 
@@ -127,7 +126,7 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
     const config: ConnectionConfig = {
       id: `conn-${Date.now()}`,
       name: connectionName.trim() || database,
-      provider: DatabaseProvider.POSTGRESQL,
+      provider: "postgresql",
       host: server.host,
       port: server.port,
       database,

@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 
 function ProviderIcon({ provider, className }: { provider: string; className?: string }) {
-  const meta = getProviderMetadata(provider as any);
+  const meta = getProviderMetadata(provider);
   if (!meta) return <div className={cn("w-5 h-5 rounded-sm bg-muted", className)} />;
   return (
     <div className={cn("relative w-5 h-5 shrink-0 rounded-sm flex items-center justify-center", className)}
@@ -68,7 +68,7 @@ export default function HomePage() {
   };
 
   const handleCopyUrl = (conn: ConnectionConfig) => {
-    const url = conn.connectionString || `${conn.provider}://${conn.user}:${conn.password}@${conn.host}:${conn.port}/${conn.database}`;
+    const url = conn.connectionString || `postgresql://${conn.user}:${conn.password}@${conn.host}:${conn.port}/${conn.database}`;
     navigator.clipboard.writeText(url);
     toast.success("Connection URL copied to clipboard");
     setOpenPopoverId(null);

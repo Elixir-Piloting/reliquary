@@ -1,12 +1,10 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use chrono::Utc;
-use rusqlite::Connection as SqliteConnection;
 use tokio_postgres::Client as PgClient;
 
 use crate::types::*;
 use crate::pg;
-use crate::sqlite;
 
 #[tauri::command]
 pub async fn list_connections(state: tauri::State<'_, AppState>) -> Result<Vec<StoredConnection>, String> {
@@ -75,8 +73,6 @@ pub async fn test_connection(url: String, _state: tauri::State<'_, AppState>) ->
 
 #[tauri::command]
 pub async fn connect(connection_id: String, url: String, state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let provider = detect_provider(&url);
-
     {
         let guard = state.connections.lock().await;
         if guard.contains_key(&connection_id) {
@@ -84,38 +80,23 @@ pub async fn connect(connection_id: String, url: String, state: tauri::State<'_,
         }
     }
 
-    match provider {
-        "sqlite" => {
-            let path = if url.starts_with("file:") {
-                url.strip_prefix("file:").unwrap_or(&url)
-            } else {
-                &url
-            };
-            let conn = SqliteConnection::open(path).map_err(|e| format!("SQLite open: {}", e))?;
-            let _ = conn.execute_batch("PRAGMA journal_mode=WAL");
-            state.connections.lock().await.insert(connection_id.clone(), DbConnection::Sqlite(Arc::new(Mutex::new(conn))));
-            Ok(format!("Connected to SQLite: {}", path))
-        }
-        _ => {
-            let conn_str = pg::parse_pg_connstr(&url)?;
-            match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await {
-                Ok(Ok((client, connection))) => {
-                    tokio::spawn(async move {
-                        if let Err(e) = connection.await {
-                            eprintln!("connection error: {}", e);
-                        }
-                    });
-                    let ver: String = client.query_one("SELECT version()", &[])
-                        .await
-                        .map(|r| r.get::<_, String>(0))
-                        .unwrap_or_else(|_| "unknown".into());
-                    state.connections.lock().await.insert(connection_id.clone(), DbConnection::Postgresql(Arc::new(client)));
-                    Ok(format!("Connected to {}: {}", provider, ver))
+    let conn_str = pg::parse_pg_connstr(&url)?;
+    match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await {
+        Ok(Ok((client, connection))) => {
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    eprintln!("connection error: {}", e);
                 }
-                Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
-                Err(_) => Err("Connection timed out (5s)".into()),
-            }
+            });
+            let ver: String = client.query_one("SELECT version()", &[])
+                .await
+                .map(|r| r.get::<_, String>(0))
+                .unwrap_or_else(|_| "unknown".into());
+            state.connections.lock().await.insert(connection_id.clone(), Arc::new(client));
+            Ok(format!("Connected to PostgreSQL: {}", ver))
         }
+        Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
+        Err(_) => Err("Connection timed out (5s)".into()),
     }
 }
 
@@ -130,123 +111,57 @@ pub async fn is_connected(connection_id: String, state: tauri::State<'_, AppStat
     Ok(state.connections.lock().await.contains_key(&connection_id))
 }
 
-fn extract_connection(guard: &HashMap<String, DbConnection>, id: &str) -> (Option<Arc<PgClient>>, Option<Arc<Mutex<SqliteConnection>>>) {
-    match guard.get(id) {
-        Some(DbConnection::Postgresql(c)) => (Some(c.clone()), None),
-        Some(DbConnection::Sqlite(a)) => (None, Some(a.clone())),
-        None => (None, None),
-    }
-}
-
-macro_rules! dispatch_command {
-    ($guard:ident, $id:expr, $pg_fn:expr, $sql_fn:expr) => {{
-        let (pg_client, sql_arc) = extract_connection(&$guard, $id);
-        drop($guard);
-        if let Some(client) = pg_client {
-            ($pg_fn)(&client).await
-        } else if let Some(arc) = sql_arc {
-            let conn = arc.lock().map_err(|e| e.to_string())?;
-            ($sql_fn)(&conn)
-        } else {
-            Err("Not connected".into())
-        }
-    }};
+fn pg_client(guard: &HashMap<String, Arc<PgClient>>, id: &str) -> Result<Arc<PgClient>, String> {
+    guard.get(id).cloned().ok_or_else(|| "Not connected".into())
 }
 
 #[tauri::command]
 pub async fn get_schemas(connection_id: String, state: tauri::State<'_, AppState>) -> Result<Vec<SchemaInfo>, String> {
     let guard = state.connections.lock().await;
-    dispatch_command!(guard, &connection_id, pg::pg_get_schemas, sqlite::sqlite_get_schemas)
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_schemas(&client).await
 }
 
 #[tauri::command]
 pub async fn get_tables(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_tables(&client, &schema).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_get_tables(&conn, &schema)
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_tables(&client, &schema).await
 }
 
 #[tauri::command]
 pub async fn get_columns(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<ColumnInfo>, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_columns(&client, &schema, &table).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_get_columns(&conn, &schema, &table)
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_columns(&client, &schema, &table).await
 }
 
 #[tauri::command]
 pub async fn get_indexes(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<IndexInfo>, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_indexes(&client, &schema, &table).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_get_indexes(&conn, &schema, &table)
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_indexes(&client, &schema, &table).await
 }
 
 #[tauri::command]
 pub async fn get_constraints(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<ConstraintInfo>, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_constraints(&client, &schema, &table).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_get_constraints(&conn, &schema, &table)
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_constraints(&client, &schema, &table).await
 }
 
 #[tauri::command]
 pub async fn get_schema_relationships(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<RelationshipInfo>, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_schema_relationships(&client, &schema).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_get_schema_relationships(&conn, &schema)
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_schema_relationships(&client, &schema).await
 }
 
 #[tauri::command]
 pub async fn get_relationships(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<RelationshipInfo>, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_relationships(&client, &schema, &table).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_get_relationships(&conn, &schema, &table)
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_relationships(&client, &schema, &table).await
 }
 
 #[tauri::command]
@@ -261,45 +176,22 @@ pub async fn get_table_data(
     state: tauri::State<'_, AppState>,
 ) -> Result<TableDataResult, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_table_data(&client, &schema, &table, page, page_size, sort_column.as_deref(), sort_direction.as_deref()).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_get_table_data(&conn, &schema, &table, page, page_size, sort_column.as_deref(), sort_direction.as_deref())
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_table_data(&client, &schema, &table, page, page_size, sort_column.as_deref(), sort_direction.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn execute_query(connection_id: String, query: String, state: tauri::State<'_, AppState>) -> Result<QueryResult, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_execute_query(&client, &query).await
-    } else if let Some(arc) = sql_arc {
-        let conn = arc.lock().map_err(|e| e.to_string())?;
-        sqlite::sqlite_execute_query(&conn, &query)
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_execute_query(&client, &query).await
 }
 
 #[tauri::command]
 pub async fn get_enum_values(connection_id: String, type_name: String, state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
     let guard = state.connections.lock().await;
-    let (pg_client, sql_arc) = extract_connection(&guard, &connection_id);
-    drop(guard);
-    if let Some(client) = pg_client {
-        pg::pg_get_enum_values(&client, &type_name).await
-    } else if sql_arc.is_some() {
-        Ok(vec![])
-    } else {
-        Err("Not connected".into())
-    }
+    let client = pg_client(&guard, &connection_id)?;
+    pg::pg_get_enum_values(&client, &type_name).await
 }
 
 #[tauri::command]

@@ -10,8 +10,7 @@ import { SafeModeToggle } from "@/components/safe-mode-toggle";
 import { QueryConfirmationDialog } from "@/components/query-confirmation-dialog";
 import { Button } from "@/components/ui/button";
 import { Persistence } from "@/lib/persistence";
-import { getConnection } from "@/lib/connections/store";
-import type { ConnectionConfig, QueryResult } from "@/lib/db/types";
+import type { QueryResult } from "@/lib/db/types";
 import { Play, Plus, Loader2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -19,7 +18,6 @@ function generateTabId() { return "q-" + Date.now(); }
 
 export default function QueryView() {
   const { connection: connectionId } = useParams<{ connection: string }>();
-  const [connection, setConnection] = useState<ConnectionConfig | null>(null);
   const [queryTabs, setQueryTabs] = useState<QueryTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -28,13 +26,6 @@ export default function QueryView() {
   const [safeMode, setSafeMode] = useState(true);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (connectionId) {
-      const conn = getConnection(connectionId);
-      if (conn) setConnection(conn);
-    }
-  }, [connectionId]);
 
   useEffect(() => {
     if (connectionId) Persistence.setQueryTabs(connectionId, queryTabs);
@@ -138,7 +129,7 @@ export default function QueryView() {
             <SQLEditor value={currentQuery} onChange={updateQuery} onExecute={handleExecute} />
           </div>
           <div className="h-96 border-t border-border shrink-0">
-            <ResultsViewer result={result} error={error} loading={loading} provider={connection?.provider} />
+            <ResultsViewer result={result} error={error} loading={loading} />
           </div>
         </div>
       </div>

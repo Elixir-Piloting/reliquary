@@ -1,6 +1,5 @@
 mod types;
 mod pg;
-mod sqlite;
 mod commands;
 
 use std::collections::HashMap;

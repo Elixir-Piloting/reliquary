@@ -18,7 +18,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { invoke } from "@tauri-apps/api/core";
 
 function ProviderIcon({ provider }: { provider: string }) {
-  const meta = getProviderMetadata(provider as any);
+  const meta = getProviderMetadata(provider);
   if (!meta) return <div className="w-4 h-4 rounded-sm bg-muted" />;
   return (
     <div className="relative w-4 h-4 shrink-0 rounded-sm flex items-center justify-center" style={{ backgroundColor: getSubtleBackground(meta.color, 1.0) }}>

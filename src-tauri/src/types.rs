@@ -1,8 +1,7 @@
-use rusqlite::Connection as SqliteConnection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio_postgres::Client as PgClient;
 
 // ---------------------------------------------------------------------------
@@ -141,20 +140,11 @@ pub struct LocalPgDatabase {
 }
 
 // ---------------------------------------------------------------------------
-// Connection storage enum
-// ---------------------------------------------------------------------------
-
-pub enum DbConnection {
-    Postgresql(Arc<PgClient>),
-    Sqlite(Arc<Mutex<SqliteConnection>>),
-}
-
-// ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
 
 pub struct AppState {
-    pub connections: tokio::sync::Mutex<HashMap<String, DbConnection>>,
+    pub connections: tokio::sync::Mutex<HashMap<String, Arc<PgClient>>>,
     pub config_path: PathBuf,
 }
 
@@ -181,15 +171,7 @@ impl AppState {
 
 pub fn detect_provider(url: &str) -> &str {
     let lower = url.to_lowercase();
-    if lower.starts_with("postgresql://") || lower.starts_with("postgres://") {
-        if lower.contains("neon.tech") { "neon" }
-        else if lower.contains("supabase.co") || lower.contains("pooler.supabase") { "supabase" }
-        else { "postgresql" }
-    } else if lower.starts_with("mysql://") { "mysql" }
-    else if lower.starts_with("mongodb://") || lower.starts_with("mongodb+srv://") { "mongodb" }
-    else if lower.starts_with("libsql://") { "libsql" }
-    else if lower.starts_with("redis://") { "redis" }
-    else if lower.starts_with("clickhouse://") { "clickhouse" }
-    else if lower.ends_with(".db") || lower.ends_with(".sqlite") || lower.ends_with(".sqlite3") { "sqlite" }
+    if lower.contains("neon.tech") { "neon" }
+    else if lower.contains("supabase.co") || lower.contains("pooler.supabase") { "supabase" }
     else { "postgresql" }
 }

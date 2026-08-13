@@ -10,7 +10,6 @@ export interface ResultsViewerProps {
   table?: string;
   onRefresh?: () => void;
   enableCRUD?: boolean;
-  provider?: string;
   page?: number;
   pageSize?: number;
   onPageChange?: (page: number) => void;

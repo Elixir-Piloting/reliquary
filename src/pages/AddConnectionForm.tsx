@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { getProviderMetadata, DatabaseProvider } from "@/lib/db/providers";
+import { POSTGRESQL_PROVIDER } from "@/lib/db/providers";
 import { addConnection, updateConnection, getConnection } from "@/lib/connections/store";
 import { parseConnectionURL } from "@/lib/connections/url-parser";
 import type { ConnectionConfig } from "@/lib/db/types";
@@ -15,20 +15,16 @@ export default function AddConnectionFormPage() {
   const { provider } = useParams<{ provider: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const meta = getProviderMetadata(provider as DatabaseProvider);
   const editId = searchParams.get("connectionId");
   const connString = searchParams.get("connectionString");
 
-  const isLocalPg = provider === "postgresql" && searchParams.get("local") === "true";
-
   const [form, setForm] = useState({
     name: "",
-    host: isLocalPg ? "localhost" : "",
-    port: String(isLocalPg ? 5432 : meta?.defaultPort || 5432),
-    database: isLocalPg ? "postgres" : "",
-    user: isLocalPg ? "postgres" : "",
+    host: "",
+    port: String(POSTGRESQL_PROVIDER.defaultPort),
+    database: "",
+    user: "",
     password: "",
-    filePath: "",
     connectionString: connString || "",
     ssl: false,
   });
@@ -43,7 +39,7 @@ export default function AddConnectionFormPage() {
         setForm(f => ({
           ...f,
           host: parsed.host || f.host,
-          port: String(parsed.port || meta?.defaultPort || 5432),
+          port: String(parsed.port || POSTGRESQL_PROVIDER.defaultPort),
           database: parsed.database || f.database,
           user: parsed.user || f.user,
           password: parsed.password || f.password,
@@ -53,7 +49,7 @@ export default function AddConnectionFormPage() {
         // keep existing values
       }
     }
-  }, [connString, editId, meta?.defaultPort]);
+  }, [connString, editId]);
 
   // Sync connection string back to fields when user types a URL
   const handleConnStringChange = (val: string) => {
@@ -81,19 +77,16 @@ export default function AddConnectionFormPage() {
         setForm({
           name: conn.name || "",
           host: conn.host || "",
-          port: String(conn.port || meta?.defaultPort || 5432),
+          port: String(conn.port || POSTGRESQL_PROVIDER.defaultPort),
           database: conn.database || "",
           user: conn.user || "",
           password: conn.password || "",
-          filePath: conn.filePath || "",
           connectionString: conn.connectionString || "",
           ssl: conn.ssl || false,
         });
       }
     }
   }, [editId]);
-
-  if (!meta) return <div className="p-8 text-center text-muted-foreground">Unknown provider</div>;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,23 +95,15 @@ export default function AddConnectionFormPage() {
     const config: ConnectionConfig = {
       id: editId || crypto.randomUUID(),
       name: form.name,
-      provider: provider!,
+      provider: provider || "postgresql",
       host: form.host || undefined,
       port: form.port ? parseInt(form.port) : undefined,
       database: form.database || undefined,
       user: form.user || undefined,
       password: form.password || undefined,
-      filePath: form.filePath || undefined,
       connectionString: form.connectionString || undefined,
       ssl: form.ssl || undefined,
     };
-
-    if (isLocalPg) {
-      config.host = "localhost";
-      config.port = 5432;
-      config.database = "postgres";
-      config.user = "postgres";
-    }
 
     if (editId) {
       updateConnection(editId, config);
@@ -139,54 +124,45 @@ export default function AddConnectionFormPage() {
         <div className="max-w-lg mx-auto p-6 pt-8">
           <div className="space-y-2 mb-8">
             <h1 className="text-2xl font-semibold">
-              {isLocalPg ? "Local PostgreSQL" : isEditing ? "Edit" : "New"} {meta.name} Connection
+              {isEditing ? "Edit" : "New"} PostgreSQL Connection
             </h1>
-            <p className="text-muted-foreground">{isLocalPg ? "Connect to a local PostgreSQL server" : meta.description}</p>
+            <p className="text-muted-foreground">{POSTGRESQL_PROVIDER.description}</p>
           </div>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="name">Connection Name *</Label>
               <Input id="name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="My Database" />
             </div>
-            {meta.connectionType === "file" ? (
+            <div className="space-y-2">
+              <Label htmlFor="connectionString">Connection String (optional)</Label>
+              <Input id="connectionString" value={form.connectionString}
+                onChange={e => handleConnStringChange(e.target.value)}
+                placeholder={POSTGRESQL_PROVIDER.urlPlaceholder} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="filePath">Database File</Label>
-                <Input id="filePath" value={form.filePath} onChange={e => setForm(f => ({ ...f, filePath: e.target.value }))} placeholder="/path/to/database.db" />
+                <Label htmlFor="host">Host</Label>
+                <Input id="host" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} placeholder="localhost" />
               </div>
-            ) : (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="connectionString">Connection String (optional)</Label>
-                  <Input id="connectionString" value={form.connectionString}
-                    onChange={e => handleConnStringChange(e.target.value)}
-                    placeholder={meta.urlPlaceholder || "postgresql://user:password@host:port/database"} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="host">Host</Label>
-                    <Input id="host" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} placeholder="localhost" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="port">Port</Label>
-                    <Input id="port" value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} placeholder={String(meta.defaultPort || 5432)} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="database">Database</Label>
-                    <Input id="database" value={form.database} onChange={e => setForm(f => ({ ...f, database: e.target.value }))} placeholder="mydb" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="user">User</Label>
-                    <Input id="user" value={form.user} onChange={e => setForm(f => ({ ...f, user: e.target.value }))} placeholder="postgres" />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input id="password" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="password" />
-                </div>
-              </>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="port">Port</Label>
+                <Input id="port" value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} placeholder={String(POSTGRESQL_PROVIDER.defaultPort)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="database">Database</Label>
+                <Input id="database" value={form.database} onChange={e => setForm(f => ({ ...f, database: e.target.value }))} placeholder="mydb" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="user">User</Label>
+                <Input id="user" value={form.user} onChange={e => setForm(f => ({ ...f, user: e.target.value }))} placeholder="postgres" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input id="password" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="password" />
+            </div>
             <div className="flex items-center gap-2">
               <Switch checked={form.ssl} onCheckedChange={v => setForm(f => ({ ...f, ssl: v }))} id="ssl" />
               <Label htmlFor="ssl">Use SSL</Label>

@@ -2,7 +2,6 @@ export interface ConnectionConfig {
   id: string;
   name: string;
   provider: string;
-  filePath?: string;
   connectionString?: string;
   host?: string;
   port?: number;

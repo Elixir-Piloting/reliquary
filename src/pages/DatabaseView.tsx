@@ -9,9 +9,8 @@ import { ResultsViewer } from "@/components/results-viewer";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getConnection } from "@/lib/connections/store";
 import { Persistence } from "@/lib/persistence";
-import type { ConnectionConfig, QueryResult, ColumnInfo } from "@/lib/db/types";
+import type { QueryResult, ColumnInfo } from "@/lib/db/types";
 import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
@@ -46,7 +45,6 @@ export default function DatabaseView() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const [connection, setConnection] = useState<ConnectionConfig | null>(null);
   const [tableTabs, setTableTabs] = useState<TableTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -58,13 +56,6 @@ export default function DatabaseView() {
   const [pkColumns, setPkColumns] = useState<Record<string, string[]>>({});
 
   const activeTab = tableTabs.find(t => t.id === activeTabId);
-
-  useEffect(() => {
-    if (connectionId) {
-      const conn = getConnection(connectionId);
-      if (conn) setConnection(conn);
-    }
-  }, [connectionId]);
 
   useEffect(() => {
     if (connectionId) Persistence.setTableTabs(connectionId, tableTabs);
@@ -228,7 +219,7 @@ export default function DatabaseView() {
                 <div className="flex-1 overflow-hidden pb-6">
                   <ResultsViewer result={result} error={error} loading={loading}
                     schema={activeTab.schema} table={activeTab.table}
-                    onRefresh={fetchData} provider={connection?.provider}
+                    onRefresh={fetchData}
                     connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
                     enableCRUD={true}
                     onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)} />
