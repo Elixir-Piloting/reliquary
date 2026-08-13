@@ -20,6 +20,12 @@ pub struct StoredConnection {
     pub color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sslmode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neon_api_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -169,9 +175,9 @@ impl AppState {
     }
 }
 
-pub fn detect_provider(url: &str) -> &str {
+pub fn detect_provider(url: &str) -> &'static str {
     let lower = url.to_lowercase();
-    if lower.contains("neon.tech") { "neon" }
+    if lower.contains("neon.tech") || lower.contains("neondb") { "neon" }
     else if lower.contains("supabase.co") || lower.contains("pooler.supabase") { "supabase" }
     else { "postgresql" }
 }

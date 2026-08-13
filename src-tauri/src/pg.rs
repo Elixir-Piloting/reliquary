@@ -6,7 +6,18 @@ use tokio_postgres::Client as PgClient;
 // Parse connection URL -> conn string parts
 // ---------------------------------------------------------------------------
 
-pub fn parse_pg_url(url: &str) -> Result<(String, String, String, String, String, String), String> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UrlParts {
+    pub host: String,
+    pub port: String,
+    pub db: String,
+    pub user: String,
+    pub password: String,
+    pub sslmode: String,
+    pub ssl_root_cert: String,
+}
+
+pub fn parse_pg_url(url: &str) -> Result<UrlParts, String> {
     let lower = url.to_lowercase();
     let rest = if lower.starts_with("postgresql://") || lower.starts_with("postgres://") {
         &url[lower.find("://").unwrap() + 3..]
@@ -23,8 +34,33 @@ pub fn parse_pg_url(url: &str) -> Result<(String, String, String, String, String
     } else {
         (urlencoding_or_raw(creds), String::new())
     };
-    let no_qs = hostpart.split('?').next().unwrap_or(hostpart);
-    let (h, p, d) = if let Some(slash) = no_qs.find('/') {
+    let (no_qs, query) = match hostpart.split_once('?') {
+        Some((h, q)) => (h, q),
+        None => (hostpart, ""),
+    };
+
+    let mut sslmode = "prefer".to_string();
+    let mut ssl_root_cert = String::new();
+    for param in query.split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = param.split_once('=').unwrap_or((param, ""));
+        match key {
+            "sslmode" => sslmode = urlencoding_or_raw(value),
+            "sslrootcert" => ssl_root_cert = urlencoding_or_raw(value),
+            _ => {}
+        }
+    }
+
+    let (h, p, d) = if no_qs.starts_with('[') {
+        let (host, after_bracket) = match no_qs.find(']') {
+            Some(close) => (&no_qs[..=close], &no_qs[close + 1..]),
+            None => (no_qs, ""),
+        };
+        let (port, db) = match after_bracket.split_once('/') {
+            Some((p, d)) => (port_of(p), d),
+            None => (port_of(after_bracket), ""),
+        };
+        (host, port, db)
+    } else if let Some(slash) = no_qs.find('/') {
         let hostport = &no_qs[..slash];
         let db = &no_qs[slash + 1..];
         if let Some(colon) = hostport.find(':') {
@@ -37,7 +73,19 @@ pub fn parse_pg_url(url: &str) -> Result<(String, String, String, String, String
     } else {
         (no_qs, "5432".to_string(), "")
     };
-    Ok((urlencoding_or_raw(h), p, urlencoding_or_raw(d), user, pass, String::new()))
+    Ok(UrlParts {
+        host: urlencoding_or_raw(h),
+        port: p,
+        db: urlencoding_or_raw(d),
+        user,
+        password: pass,
+        sslmode,
+        ssl_root_cert,
+    })
+}
+
+fn port_of(s: &str) -> String {
+    s.strip_prefix(':').filter(|p| !p.is_empty()).unwrap_or("5432").to_string()
 }
 
 pub fn urlencoding_or_raw(s: &str) -> String {
@@ -62,17 +110,15 @@ pub fn urlencoding_or_raw(s: &str) -> String {
 }
 
 pub fn parse_pg_connstr(url: &str) -> Result<String, String> {
-    let (host, port, db, user, pass, ssl) = parse_pg_url(url)?;
-    let mut s = format!("host={} port={} dbname={}", host, port, db);
-    if !user.is_empty() {
-        s.push_str(&format!(" user={}", user));
+    let parts = parse_pg_url(url)?;
+    let mut s = format!("host={} port={} dbname={}", parts.host, parts.port, parts.db);
+    if !parts.user.is_empty() {
+        s.push_str(&format!(" user={}", parts.user));
     }
-    if !pass.is_empty() {
-        s.push_str(&format!(" password={}", pass));
+    if !parts.password.is_empty() {
+        s.push_str(&format!(" password={}", parts.password));
     }
-    if ssl == "require" {
-        s.push_str(" sslmode=require");
-    }
+    s.push_str(&format!(" sslmode={}", parts.sslmode));
     s.push_str(" connect_timeout=5");
     Ok(s)
 }

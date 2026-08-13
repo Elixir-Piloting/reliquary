@@ -23,6 +23,9 @@ pub async fn add_connection(name: String, url: String, state: tauri::State<'_, A
         provider: Some(provider),
         color: None,
         created_at: Some(Utc::now().to_rfc3339()),
+        sslmode: None,
+        read_only: None,
+        neon_api_key: None,
     };
     config.push(conn.clone());
     state.save_config(&config);

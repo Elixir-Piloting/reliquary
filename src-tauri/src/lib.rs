@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 pub use types::*;
+pub use pg::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
