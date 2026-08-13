@@ -37,7 +37,7 @@ function basePostgres(url: string): ParsedConnectionURL {
       const password = parsedUrl.password ? decodeURIComponent(parsedUrl.password) : "";
       const database = pathname.replace(/^\//, "").split("?")[0];
       const sslMode = searchParams.get("sslmode") || searchParams.get("ssl_mode");
-      const ssl = sslMode === "require" || sslMode === "prefer" || searchParams.get("ssl") === "true";
+      const ssl = (sslMode != null && ["require", "prefer", "verify-ca", "verify-full"].includes(sslMode)) || searchParams.get("ssl") === "true";
 
       const port = portStr ? parseInt(portStr, 10) : 5432;
       if (!host) throw new Error("Missing host");
@@ -73,7 +73,7 @@ function basePostgres(url: string): ParsedConnectionURL {
   const decodedHost = host ? decodeURIComponent(host) : "";
   const decodedDatabase = database ? decodeURIComponent(database) : "";
   const sslMode = new URLSearchParams(queryString).get("sslmode") || undefined;
-  const ssl = sslMode === "require" || sslMode === "prefer" || new URLSearchParams(queryString).get("ssl") === "true";
+  const ssl = (sslMode != null && ["require", "prefer", "verify-ca", "verify-full"].includes(sslMode)) || new URLSearchParams(queryString).get("ssl") === "true";
 
   if (!decodedHost) throw new Error("Missing host");
   return { provider: "postgresql", host: decodedHost, port, database: decodedDatabase, user: decodedUser, password: decodedPassword, ssl, sslmode: sslMode };

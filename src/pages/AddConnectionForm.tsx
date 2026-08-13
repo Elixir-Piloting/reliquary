@@ -38,6 +38,10 @@ export default function AddConnectionFormPage() {
     readOnly: false,
   });
 
+  // Whichever the user last edited wins when building the URL on submit.
+  // "url" → the raw connection string (with sslmode applied); "fields" → rebuild from host/port/db/user/password.
+  const [urlSource, setUrlSource] = useState<"url" | "fields">(() => (connString ? "url" : "fields"));
+
   const isEditing = !!editId;
 
   // Parse connection string into individual fields
@@ -63,6 +67,7 @@ export default function AddConnectionFormPage() {
   // Sync connection string back to fields when user types a URL
   const handleConnStringChange = (val: string) => {
     setForm(f => ({ ...f, connectionString: val }));
+    setUrlSource("url");
     if (val) {
       try {
         const parsed = parseConnectionURL(val);
@@ -77,6 +82,13 @@ export default function AddConnectionFormPage() {
         }));
       } catch {}
     }
+  };
+
+  // Editing any structured field makes the field-built URL authoritative
+  // (so a pre-filled connection string can no longer silently override it).
+  const handleFieldChange = (field: "host" | "port" | "database" | "user" | "password", value: string) => {
+    setForm(f => ({ ...f, [field]: value }));
+    setUrlSource("fields");
   };
 
   // Load an existing connection from the Rust store (single source of truth)
@@ -103,7 +115,7 @@ export default function AddConnectionFormPage() {
     e.preventDefault();
     if (!form.name.trim()) { toast.error("Name is required"); return; }
 
-    const url = form.connectionString
+    const url = urlSource === "url"
       ? withSslMode(form.connectionString, form.sslmode)
       : buildConnectionURL({
           host: form.host || "localhost",
@@ -155,26 +167,26 @@ export default function AddConnectionFormPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="host">Host</Label>
-                <Input id="host" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} placeholder="localhost" />
+                <Input id="host" value={form.host} onChange={e => handleFieldChange("host", e.target.value)} placeholder="localhost" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="port">Port</Label>
-                <Input id="port" value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} placeholder={String(POSTGRESQL_PROVIDER.defaultPort)} />
+                <Input id="port" value={form.port} onChange={e => handleFieldChange("port", e.target.value)} placeholder={String(POSTGRESQL_PROVIDER.defaultPort)} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="database">Database</Label>
-                <Input id="database" value={form.database} onChange={e => setForm(f => ({ ...f, database: e.target.value }))} placeholder="mydb" />
+                <Input id="database" value={form.database} onChange={e => handleFieldChange("database", e.target.value)} placeholder="mydb" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="user">User</Label>
-                <Input id="user" value={form.user} onChange={e => setForm(f => ({ ...f, user: e.target.value }))} placeholder="postgres" />
+                <Input id="user" value={form.user} onChange={e => handleFieldChange("user", e.target.value)} placeholder="postgres" />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="password" />
+              <Input id="password" type="password" value={form.password} onChange={e => handleFieldChange("password", e.target.value)} placeholder="password" />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
