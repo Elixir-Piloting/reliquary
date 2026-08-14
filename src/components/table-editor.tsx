@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, X, Loader2, Save, ArrowLeft, Check, ChevronUp, ChevronDown, KeyRound, GripVertical } from "lucide-react";
+import { Plus, X, Loader2, Save, ArrowLeft, Check, KeyRound, GripVertical } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ColumnInfo, TableInfo } from "@/lib/db/types";
 import { useRightSidebar } from "@/components/right-sidebar-context";
@@ -62,18 +62,14 @@ interface ColumnRowProps {
   isCreate: boolean;
   saving: boolean;
   onUpdate: (i: number, field: keyof NewColumn, value: any) => void;
-  onMove: (i: number, dir: -1 | 1) => void;
   onRemove: (i: number) => void;
   onAddColumn: (col: NewColumn) => void;
 }
 
 /** A sortable column row using @dnd-kit; reordering animates via its built-in
- *  sortable transitions. The chevrons also call onMove, which reorders the
- *  array and lets dnd-kit animate the swap. */
-function ColumnRow({ col, index, total, isCreate, saving, onUpdate, onMove, onRemove, onAddColumn }: ColumnRowProps) {
+ *  sortable transitions. Drag the grip handle to reorder. */
+function ColumnRow({ col, index, total, isCreate, saving, onUpdate, onRemove, onAddColumn }: ColumnRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: col.id });
-  const isLast = index === total - 1;
-  const isFirst = index === 0;
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -81,20 +77,12 @@ function ColumnRow({ col, index, total, isCreate, saving, onUpdate, onMove, onRe
   };
   return (
     <div ref={setNodeRef} style={style} className={COL_GRID + " grid items-center gap-2 py-1 text-sm"}>
-      {/* # with drag handle + stacked up/down chevrons */}
+      {/* # with drag handle */}
       <div className={cellClass + " flex flex-col items-center"}>
         <button {...attributes} {...listeners} className="p-0.5 rounded hover:bg-accent text-muted-foreground cursor-grab active:cursor-grabbing" title="Drag to reorder">
           <GripVertical className="h-3.5 w-3.5" />
         </button>
-        <button onClick={() => onMove(index, -1)} disabled={isFirst}
-          className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move up">
-          <ChevronUp className="h-3 w-3" />
-        </button>
         <span className="text-xs text-muted-foreground tabular-nums leading-tight">{index + 1}</span>
-        <button onClick={() => onMove(index, 1)} disabled={isLast}
-          className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move down">
-          <ChevronDown className="h-3 w-3" />
-        </button>
       </div>
       <div className={cellClass}>
         <Input value={col.name} onChange={e => onUpdate(index, "name", e.target.value)} placeholder="column_name" className="h-8 text-sm" />
@@ -198,14 +186,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const removeColumn = (i: number) => setColumns(prev => prev.filter((_, idx) => idx !== i));
   const updateColumn = (i: number, field: keyof NewColumn, value: any) =>
     setColumns(prev => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
-
-  /** Move a column up/down. Uses dnd-kit's arrayMove so the sortable animation
-   *  plays on the swap (same as drag-and-drop reordering). */
-  const moveColumn = (i: number, dir: -1 | 1) => {
-    const j = i + dir;
-    if (j < 0 || j >= columns.length) return;
-    setColumns(prev => arrayMove(prev, i, j));
-  };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
@@ -439,7 +419,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
                       isCreate={isCreate}
                       saving={saving}
                       onUpdate={updateColumn}
-                      onMove={moveColumn}
                       onRemove={removeColumn}
                       onAddColumn={handleAddColumn}
                     />
@@ -516,9 +495,10 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
                   </Select>
                 </div>
                 <div className={cellClass + " flex items-center justify-end"}>
-                  <Button variant="ghost" size="icon" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Add foreign key"><Plus className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" onClick={() => setFkForm(emptyFk(schema))} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Clear foreign key"><X className="h-4 w-4" /></Button>
                 </div>
               </div>
+              <Button variant="outline" size="sm" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn}><Plus className="h-4 w-4 mr-1" />Add Foreign Key</Button>
             </div>
           )}
 
