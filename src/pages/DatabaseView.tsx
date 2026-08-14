@@ -34,6 +34,7 @@ export default function DatabaseView() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
@@ -203,6 +204,7 @@ export default function DatabaseView() {
   const fetchData = useCallback(async (silent = false) => {
     if (!connectionId || !activeTab || activeTab.kind !== "table") return;
     if (!silent) setLoading(true);
+    setRefreshing(true);
     setError(null);
     try {
       const data = await API.getTableData(connectionId, activeTab.schema, activeTab.table, page, pageSize, sort?.column, sort?.direction, filters);
@@ -224,6 +226,7 @@ export default function DatabaseView() {
       }
     }
     if (!silent) setLoading(false);
+    setRefreshing(false);
   }, [connectionId, activeTab, page, pageSize, sort, filters]);
 
   const fetchDataRef = useRef(fetchData);
@@ -314,7 +317,7 @@ export default function DatabaseView() {
             <div id="table-actions-slot" />
             <div className={cn("relative flex items-center gap-1", autoRefreshMs !== null && "rounded-md")}>
               <Button variant="ghost" size="sm" className="h-7 px-1.5 gap-1 text-muted-foreground hover:text-foreground" disabled={loading} onClick={() => fetchData()}>
-                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin-burst" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {loading || refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin-burst" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 <span className="text-xs">Refresh</span>
               </Button>
               {autoRefreshMs !== null && (
