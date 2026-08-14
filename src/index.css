@@ -136,8 +136,10 @@
   *::-webkit-scrollbar-thumb:hover { background: hsl(240 5% 60% / 0.6); border: 2px solid transparent; background-clip: padding-box; }
   *::-webkit-scrollbar-corner { background: transparent; }
 
-  /* Monaco editors: match the app background, hide the gutter/minimap/ruler, and
-     pad the top so the first line doesn't touch the panel edge. */
+  /* Monaco editors: match the app background, hide the gutter/minimap/ruler.
+     (Do NOT pad .lines-content here — Monaco computes cursor/line positions
+     itself, so CSS padding desyncs the cursor. Use the editor's
+     `padding: { top }` option instead.) */
   .monaco-editor,
   .monaco-editor .margin,
   .monaco-editor-background,
@@ -147,9 +149,6 @@
   .monaco-editor .margin { background-color: hsl(var(--background)) !important; }
   .monaco-editor .decorationsOverviewRuler,
   .monaco-editor .minimap { display: none !important; }
-  .monaco-editor .lines-content {
-    padding-top: 8px;
-  }
 }
 
 @layer utilities {

@@ -344,7 +344,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
             theme={dark ? "vs-dark" : "vs"}
             value={jsonText}
             onChange={val => setJsonText(val || "")}
-            options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "off", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, formatOnPaste: true, overviewRulerLanes: 0, hideCursorInOverviewRuler: true }}
+            options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "off", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, formatOnPaste: true, overviewRulerLanes: 0, hideCursorInOverviewRuler: true, padding: { top: 8, bottom: 8 } }}
           />
         </div>
       )}
