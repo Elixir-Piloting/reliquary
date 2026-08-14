@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult, ResultsViewerProps, PendingChange } from "./types";
 import { ReviewChangesPanel } from "./review-changes-panel";
+import { BorderBeam } from "@/components/ui/border-beam";
 import { RowEditorPanel } from "./row-editor-panel";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useRightSidebar } from "@/components/right-sidebar-context";
@@ -675,11 +676,14 @@ export function ResultsViewer({
         const slot = typeof document !== 'undefined' ? document.getElementById('review-changes-slot') : null;
         if (!slot) return null;
         return createPortal(
-          <Button variant="outline" size="sm" onClick={() => setShowReviewSheet(true)}
-            className="text-amber-600 dark:text-amber-400 border-amber-500/40 hover:bg-amber-500/10">
-            <AlertTriangle className="h-3.5 w-3.5 mr-1" />
-            Review ({pendingChanges.length}) change{pendingChanges.length !== 1 ? 's' : ''}
-          </Button>, slot);
+          <div className="relative">
+            <Button variant="outline" size="sm" onClick={() => setShowReviewSheet(true)}
+              className="text-amber-600 dark:text-amber-400 border-amber-500/40 hover:bg-amber-500/10">
+              <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+              Review ({pendingChanges.length}) change{pendingChanges.length !== 1 ? 's' : ''}
+            </Button>
+            <BorderBeam size={40} duration={4} colorFrom="#f59e0b" colorTo="#f59e0b" borderWidth={1.5} />
+          </div>, slot);
       })()}
       {canEdit && (
         <ConfirmDialog

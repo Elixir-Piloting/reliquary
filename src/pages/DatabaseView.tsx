@@ -7,6 +7,7 @@ import { TableEditor } from "@/components/table-editor";
 import { ResultsViewer } from "@/components/results-viewer";
 import { QueryPane } from "@/components/query-pane";
 import SchemaVisualizer from "@/components/schema-visualizer";
+import { BorderBeam } from "@/components/ui/border-beam";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Persistence } from "@/lib/persistence";
@@ -280,11 +281,14 @@ export default function DatabaseView() {
         <div className="h-auto min-h-12 border-b border-border flex items-center justify-between px-6 py-2 shrink-0 bg-muted/20">
           <div className="flex items-center gap-3">
             <div id="table-actions-slot" />
-            <div className="flex items-center gap-1">
+            <div className={cn("relative flex items-center gap-1", autoRefreshMs !== null && "rounded-md")}>
               <Button variant="ghost" size="sm" className="h-7 px-1.5 gap-1 text-muted-foreground hover:text-foreground" disabled={loading} onClick={() => fetchData()}>
                 {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin-burst" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 <span className="text-xs">Refresh</span>
               </Button>
+              {autoRefreshMs !== null && (
+                <BorderBeam size={40} duration={3} colorFrom="var(--color-primary)" colorTo="var(--color-primary)" borderWidth={1.5} />
+              )}
               <Popover open={autoRefreshOpen} onOpenChange={setAutoRefreshOpen}>
                 <PopoverTrigger asChild>
                   <button className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Auto refresh">
