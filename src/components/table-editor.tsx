@@ -19,8 +19,9 @@ const COLUMN_TYPES = ["VARCHAR", "TEXT", "INTEGER", "BIGINT", "SMALLINT", "DECIM
 
 const FK_ACTIONS = ["NO ACTION", "CASCADE", "SET NULL", "RESTRICT"] as const;
 
-/** Shared grid template for the column header + rows (6 cells). */
-const COL_GRID = "grid-cols-[3rem_minmax(8rem,1fr)_8rem_7rem_minmax(10rem,1fr)_2.5rem]";
+/** Shared grid template for the column header + rows (7 cells). The first
+ *  column is an empty gutter reserved for the drag-and-drop handle. */
+const COL_GRID = "grid-cols-[2rem_3rem_minmax(8rem,1fr)_8rem_7rem_minmax(10rem,1fr)_2.5rem]";
 
 /** Shared grid template for the foreign-key header + rows (6 cells). */
 const FK_GRID = "grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_8rem_8rem_2.5rem]";
@@ -77,12 +78,14 @@ function ColumnRow({ col, index, total, isCreate, saving, onUpdate, onRemove, on
   };
   return (
     <div ref={setNodeRef} style={style} className={COL_GRID + " grid items-center gap-2 py-1 text-sm"}>
-      {/* # with drag handle */}
-      <div className={cellClass + " flex flex-col items-center"}>
+      {/* Drag handle gutter */}
+      <div className={cellClass + " flex items-center justify-center"}>
         <button {...attributes} {...listeners} className="p-0.5 rounded hover:bg-accent text-muted-foreground cursor-grab active:cursor-grabbing" title="Drag to reorder">
           <GripVertical className="h-3.5 w-3.5" />
         </button>
-        <span className="text-xs text-muted-foreground tabular-nums leading-tight">{index + 1}</span>
+      </div>
+      <div className={cellClass + " flex items-center justify-center"}>
+        <span className="text-xs text-muted-foreground tabular-nums">{index + 1}</span>
       </div>
       <div className={cellClass}>
         <Input value={col.name} onChange={e => onUpdate(index, "name", e.target.value)} placeholder="column_name" className="h-8 text-sm" />
@@ -400,6 +403,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
           <div className="space-y-2">
             <Label>{isCreate ? "Columns" : "Add New Columns"}</Label>
             <div className={COL_GRID + " grid items-center gap-2 text-xs font-medium text-muted-foreground border-b border-border/70 pb-1.5"}>
+              <div className={cellClass} />
               <div className={cellClass + " flex items-center justify-center"}>#</div>
               <div className={cellClass}>Name</div>
               <div className={cellClass}>Type</div>
@@ -498,7 +502,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
                   <Button variant="ghost" size="icon" onClick={() => setFkForm(emptyFk(schema))} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Clear foreign key"><X className="h-4 w-4" /></Button>
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn}><Plus className="h-4 w-4 mr-1" />Add Foreign Key</Button>
+              <Button variant="outline" size="sm" onClick={addFk}><Plus className="h-4 w-4 mr-1" />Add Foreign Key</Button>
             </div>
           )}
 
