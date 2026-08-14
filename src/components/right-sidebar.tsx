@@ -53,7 +53,8 @@ export function RightSidebar({ open, children, width: defaultWidth = 380 }: Righ
     <aside
       ref={asideRef}
       className={cn(
-        "h-full shrink-0 overflow-hidden border-l border-border bg-background transition-[width] duration-300 ease-in-out",
+        "h-full shrink-0 overflow-hidden border-l border-border bg-background",
+        dragging || !open ? "transition-none" : "transition-[width] duration-300 ease-in-out",
         !open && "border-l-transparent"
       )}
       style={{ width: open ? width : 0 }}
@@ -63,11 +64,12 @@ export function RightSidebar({ open, children, width: defaultWidth = 380 }: Righ
         {open && (
           <div
             onPointerDown={onResizeStart}
-            className={cn("absolute inset-y-0 left-0 -ml-1 w-1.5 cursor-col-resize transition-colors",
-              dragging ? "bg-primary/70" : "hover:bg-primary/50")}
-            style={{ zIndex: 20 }}
+            className="group/resize absolute inset-y-0 left-0 -ml-1 w-2.5 cursor-col-resize z-20 flex justify-center"
             title="Drag to resize"
-          />
+          >
+            <div className={cn("w-px h-full transition-colors",
+              dragging ? "bg-primary" : "bg-primary/0 group-hover/resize:bg-primary/50")} />
+          </div>
         )}
         {children}
       </div>

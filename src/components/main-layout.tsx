@@ -39,6 +39,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const [connectionsPopoverOpen, setConnectionsPopoverOpen] = useState(false);
   const [currentConnection, setCurrentConnection] = useState<Connection | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
 
   const { data: connections = [] } = useConnections();
   const connectMutation = useConnect();
@@ -75,18 +76,24 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
     e.preventDefault();
     const startX = e.clientX;
     const startWidth = sidebarWidth;
+    setSidebarResizing(true);
     const onMove = (ev: PointerEvent) => setSidebarWidth(startWidth + (ev.clientX - startX));
     const onUp = () => {
+      setSidebarResizing(false);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className={cn("border-r flex flex-col relative group transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "", "shrink-0", "border-border")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 330 } : undefined}>
+      <div className={cn("border-r flex flex-col relative group shrink-0 border-border",
+        sidebarCollapsed ? "w-0 overflow-hidden" : "",
+        sidebarResizing ? "transition-none" : "transition-all duration-200 ease-in-out")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 330 } : undefined}>
         <div className="px-4 py-4 shrink-0">
           <Popover open={connectionsPopoverOpen} onOpenChange={setConnectionsPopoverOpen}>
             <PopoverTrigger asChild>
@@ -149,10 +156,12 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         {!sidebarCollapsed && (
           <div
             onPointerDown={onResizeStart}
-            className="absolute inset-y-0 right-0 -mr-1 w-1.5 cursor-col-resize transition-colors hover:bg-primary/50 active:bg-primary/70"
-            style={{ zIndex: 20 }}
+            className="group/resize absolute inset-y-0 right-0 -mr-1 w-2.5 cursor-col-resize z-20 flex justify-center"
             title="Drag to resize"
-          />
+          >
+            <div className={cn("w-px h-full transition-colors",
+              sidebarResizing ? "bg-primary" : "bg-primary/0 group-hover/resize:bg-primary/50")} />
+          </div>
         )}
       </div>
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
