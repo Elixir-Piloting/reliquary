@@ -70,10 +70,16 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
   if (!connectionId) return <div className="p-4 text-sm text-muted-foreground">Connect to a database to view schemas</div>;
   if (schemasLoading && schemas.length === 0) return <SchemaExplorerLoadingState />;
 
+  const handleSchemaCreated = (schema: string) => {
+    setSelectedSchema(schema);
+    loadSchemas();
+  };
+
   return (
     <div className="space-y-2">
       <div className="px-2 space-y-2">
-        <SchemaSelector schemas={schemas} selectedSchema={selectedSchema} onSchemaSelect={setSelectedSchema} onCreateSchema={() => {}} />
+        <SchemaSelector connectionId={connectionId} schemas={schemas} selectedSchema={selectedSchema}
+          onSchemaSelect={setSelectedSchema} onSchemaCreated={handleSchemaCreated} />
         <TableSearch value={tableSearchTerm} onChange={setTableSearchTerm} />
       </div>
       <div className="space-y-1">

@@ -14,6 +14,8 @@ pub use pg::*;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
             let _ = std::fs::create_dir_all(&data_dir);
@@ -35,6 +37,7 @@ pub fn run() {
             commands::is_connected,
             commands::get_connection_info,
             commands::get_schemas,
+            commands::create_schema,
             commands::get_tables,
             commands::get_columns,
             commands::get_indexes,

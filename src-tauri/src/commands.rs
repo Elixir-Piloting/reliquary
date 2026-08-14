@@ -179,6 +179,16 @@ pub async fn get_schemas(connection_id: String, state: tauri::State<'_, AppState
 }
 
 #[tauri::command]
+pub async fn create_schema(connection_id: String, name: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    if handle.read_only {
+        return Err("Connection is read-only".into());
+    }
+    let client = get_client(&handle).await?;
+    pg::pg_create_schema(&client, &name).await
+}
+
+#[tauri::command]
 pub async fn get_tables(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
     let handle = get_handle(&state, &connection_id).await?;
     let client = get_client(&handle).await?;

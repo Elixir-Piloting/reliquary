@@ -219,6 +219,9 @@ const API = {
   async getSchemas(connectionId: string): Promise<SchemaInfo[]> {
     return invoke("get_schemas", { connectionId });
   },
+  async createSchema(connectionId: string, name: string): Promise<void> {
+    return invoke("create_schema", { connectionId, name });
+  },
   async getTables(connectionId: string, schema: string): Promise<TableInfo[]> {
     return invoke("get_tables", { connectionId, schema });
   },

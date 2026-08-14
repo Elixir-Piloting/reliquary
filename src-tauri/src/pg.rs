@@ -381,6 +381,17 @@ pub async fn pg_get_schemas(client: &PgClient) -> Result<Vec<SchemaInfo>, String
     }).collect())
 }
 
+pub async fn pg_create_schema(client: &PgClient, schema: &str) -> Result<(), String> {
+    if schema.trim().is_empty() {
+        return Err("Schema name is required".into());
+    }
+    let quoted = format!("\"{}\"", schema.trim().replace('"', "\"\""));
+    client.execute(&format!("CREATE SCHEMA {}", quoted), &[])
+        .await
+        .map_err(|e| format!("create schema: {}", e))?;
+    Ok(())
+}
+
 /// Single query for the table/view/materialized-view/partitioned-table list in a
 /// schema. `reltuples` is a planner estimate (fine for a count badge; the real
 /// `COUNT(*)` lives in `pg_get_table_data`). `relrowsecurity` marks RLS-enabled

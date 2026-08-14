@@ -21,7 +21,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConfirmDialog } from "@/components/results-viewer/confirm-dialog";
-import { toCsv, toJson, downloadText } from "@/lib/export";
+import { toCsv, toJson } from "@/lib/export";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { Table } from "./types";
 import type { ColumnInfo } from "@/lib/ipc-client";
 
@@ -157,9 +159,19 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
       const data = await invoke<any>("get_table_data", { connectionId, schema: menuTable.schema, table: menuTable.name, page: 1, pageSize: 100000 });
       const result = { columns: (data.columns || []) as { name: string; dataType: string }[], rows: (data.rows || []) as Record<string, unknown>[] };
       const base = `${menuTable.schema}.${menuTable.name}`;
-      if (format === "csv") downloadText(`${base}.csv`, toCsv(result), "text/csv");
-      else if (format === "json") downloadText(`${base}.json`, toJson(result), "application/json");
-      else downloadText(`${base}.sql`, toSqlInserts(menuTable.schema, menuTable.name, result.columns, result.rows), "application/sql");
+      let content: string;
+      let ext: string;
+      if (format === "csv") { content = toCsv(result); ext = "csv"; }
+      else if (format === "json") { content = toJson(result); ext = "json"; }
+      else { content = toSqlInserts(menuTable.schema, menuTable.name, result.columns, result.rows); ext = "sql"; }
+
+      // Ask the user where to save, defaulting to the table name.
+      const filePath = await save({
+        defaultPath: `${base}.${ext}`,
+        filters: [{ name: format.toUpperCase(), extensions: [ext] }],
+      });
+      if (!filePath) { setBusy(false); return; } // cancelled
+      await writeTextFile(filePath, content);
       toast.success(`Exported ${result.rows.length} rows as ${format.toUpperCase()}`);
     } catch (e) {
       toast.error("Export failed", { description: String(e) });
