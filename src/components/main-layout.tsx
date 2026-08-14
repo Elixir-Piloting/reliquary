@@ -34,7 +34,7 @@ function ProviderIcon({ provider }: { provider: string }) {
 
 function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
-  const { collapsed: sidebarCollapsed } = useSidebar();
+  const { collapsed: sidebarCollapsed, toggle: toggleSidebar, width: sidebarWidth, setWidth: setSidebarWidth } = useSidebar();
   const rightSidebar = useRightSidebar();
   const [connectionsPopoverOpen, setConnectionsPopoverOpen] = useState(false);
   const [currentConnection, setCurrentConnection] = useState<Connection | null>(null);
@@ -71,9 +71,22 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
     if (currentConnection) navigate(`/db/${currentConnection.id}?newTable=${schema}`);
   };
 
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    const onMove = (ev: PointerEvent) => setSidebarWidth(startWidth + (ev.clientX - startX));
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className={cn("border-r border-border flex flex-col transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "w-64", "shrink-0")}>
+      <div className={cn("border-r border-border flex flex-col relative group transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "", "shrink-0")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 176 } : undefined}>
         <div className="px-4 py-4 shrink-0">
           <Popover open={connectionsPopoverOpen} onOpenChange={setConnectionsPopoverOpen}>
             <PopoverTrigger asChild>
@@ -116,8 +129,10 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
             </PopoverContent>
           </Popover>
         </div>
-        <ScrollArea className="flex-1 p-4">
-          <SchemaExplorer connectionId={currentConnection?.id} onTableSelect={handleTableSelect} onOpenNewTableTab={handleNewTable} />
+        <ScrollArea className="flex-1 p-4 pr-2.5">
+          <div className="pr-2">
+            <SchemaExplorer connectionId={currentConnection?.id} onTableSelect={handleTableSelect} onOpenNewTableTab={handleNewTable} />
+          </div>
         </ScrollArea>
         <div className="p-2 shrink-0">
           <TooltipProvider>
@@ -131,6 +146,14 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
             </div>
           </TooltipProvider>
         </div>
+        {!sidebarCollapsed && (
+          <div
+            onPointerDown={onResizeStart}
+            className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize group-hover:bg-accent"
+            style={{ zIndex: 20 }}
+            title="Drag to resize"
+          />
+        )}
       </div>
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         {children}
