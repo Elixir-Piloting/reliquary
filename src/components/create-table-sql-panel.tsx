@@ -49,7 +49,7 @@ export function CreateTableSqlPanel({ sql, schema, table, onClose }: CreateTable
           theme={dark ? "vs-dark" : "vs"}
           value={value}
           onChange={v => setValue(v || "")}
-          options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "off", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, padding: { top: 8, bottom: 8 } }}
+          options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "off", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, padding: { top: 8, bottom: 8 }, renderLineHighlight: "none" }}
         />
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-border px-3 py-2.5">

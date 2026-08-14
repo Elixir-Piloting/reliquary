@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { SQLEditor } from "@/components/sql-editor";
 import { ResultsViewer } from "@/components/results-viewer";
 import { SafeModeToggle } from "@/components/safe-mode-toggle";
@@ -61,11 +61,40 @@ interface QueryPaneProps {
 export function QueryPane({ connectionId, tab, onQueryChange, onNewTab }: QueryPaneProps) {
   const [transient, setTransient] = useState<QueryPaneTransient>(() => transientStore.get(tab.id) || initialTransient(connectionId));
   const t = transient;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [resultsHeight, setResultsHeight] = useState(() => Persistence.getQueryResultsHeight());
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     transientStore.set(tab.id, t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.id, t]);
+
+  useEffect(() => {
+    Persistence.setQueryResultsHeight(resultsHeight);
+  }, [resultsHeight]);
+
+  const onDividerPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    setDragging(true);
+    const onMove = (ev: PointerEvent) => {
+      const maxH = rect.height - 120;
+      const next = Math.min(Math.max(rect.bottom - ev.clientY, 80), maxH);
+      setResultsHeight(next);
+    };
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }, []);
 
   const schemasQuery = useSchemas(connectionId);
   const schemas = (schemasQuery.data || []).map(s => s.schemaName);
@@ -120,7 +149,7 @@ export function QueryPane({ connectionId, tab, onQueryChange, onNewTab }: QueryP
   const showingExplain = t.explainResult !== null || t.explainError !== null || t.explainLoading;
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div ref={containerRef} className="flex flex-col flex-1 min-h-0">
       <div className="h-12 border-b border-border flex items-center gap-2 px-4 shrink-0 overflow-x-auto">
         <Button onClick={handleExecute} disabled={t.loading || !currentQuery.trim()}>
           {t.loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
@@ -146,7 +175,13 @@ export function QueryPane({ connectionId, tab, onQueryChange, onNewTab }: QueryP
           getTables={schema => API.getTables(connectionId, schema).then(ts => ts.map(t => t.tableName))}
           getColumns={(schema, table) => API.getColumns(connectionId, schema, table).then(cs => cs.map(c => c.columnName))} />
       </div>
-      <div className="h-96 border-t border-border shrink-0">
+      <div
+        onPointerDown={onDividerPointerDown}
+        className={cn("h-1.5 shrink-0 cursor-row-resize border-y transition-colors select-none",
+          dragging ? "bg-primary/70" : "hover:bg-primary/50")}
+        title="Drag to resize"
+      />
+      <div style={{ height: resultsHeight }} className="shrink-0 overflow-hidden border-t border-border">
         {showingExplain ? (
           <>
             <div className="flex h-8 items-center gap-2 border-b border-border bg-muted/20 px-3">

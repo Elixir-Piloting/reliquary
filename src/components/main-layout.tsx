@@ -86,7 +86,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className={cn("border-r border-border flex flex-col relative group transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "", "shrink-0")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 330 } : undefined}>
+      <div className={cn("border-r flex flex-col relative group transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "", "shrink-0", "border-border")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 330 } : undefined}>
         <div className="px-4 py-4 shrink-0">
           <Popover open={connectionsPopoverOpen} onOpenChange={setConnectionsPopoverOpen}>
             <PopoverTrigger asChild>
@@ -149,7 +149,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         {!sidebarCollapsed && (
           <div
             onPointerDown={onResizeStart}
-            className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize"
+            className="absolute inset-y-0 right-0 -mr-1 w-1.5 cursor-col-resize transition-colors hover:bg-primary/50 active:bg-primary/70"
             style={{ zIndex: 20 }}
             title="Drag to resize"
           />

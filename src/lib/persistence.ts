@@ -117,6 +117,30 @@ export const Persistence = {
     localStorage.setItem(`${STORAGE_PREFIX}safe_mode_${connectionId}`, String(enabled));
   },
 
+  getQueryResultsHeight(): number {
+    if (typeof window === "undefined") return 384;
+    const stored = localStorage.getItem(`${STORAGE_PREFIX}query_results_height`);
+    const parsed = stored ? Number(stored) : 384;
+    return Number.isFinite(parsed) && parsed >= 80 ? parsed : 384;
+  },
+
+  setQueryResultsHeight(height: number): void {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(`${STORAGE_PREFIX}query_results_height`, String(height));
+  },
+
+  getRightSidebarWidth(): number | null {
+    if (typeof window === "undefined") return null;
+    const stored = localStorage.getItem(`${STORAGE_PREFIX}right_sidebar_width`);
+    const parsed = stored ? Number(stored) : NaN;
+    return Number.isFinite(parsed) && parsed >= 260 ? parsed : null;
+  },
+
+  setRightSidebarWidth(width: number): void {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(`${STORAGE_PREFIX}right_sidebar_width`, String(width));
+  },
+
   getWorkspaceTabs(connectionId: string): Array<any> {
     if (typeof window === "undefined") return [];
     try {

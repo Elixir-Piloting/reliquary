@@ -429,10 +429,8 @@ export function ResultsViewer({
   if (loading) return <ResultsLoadingSkeleton />;
   if (error) return <div className="p-4 text-sm text-destructive bg-destructive/10 rounded-md"><div className="font-medium mb-1">Error</div><div className="font-mono text-xs">{error}</div></div>;
   if (!displayResult) return (
-    <div className="w-full border border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-md p-4">
-      <div className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 shrink-0" />
-        <span>No results to display</span>
-      </div>
+    <div className="flex h-full items-center justify-center">
+      <span className="text-sm text-muted-foreground">No results to display</span>
     </div>
   );
 
@@ -636,10 +634,8 @@ export function ResultsViewer({
           </div>
         </>
       ) : (
-        <div className="w-full border border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-md p-4">
-          <div className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 shrink-0" />
-            <span>{schema && table ? "This table contains no rows" : "Query returned no rows"}</span>
-          </div>
+        <div className="flex h-full items-center justify-center">
+          <span className="text-sm text-muted-foreground">{schema && table ? "This table contains no rows" : "Query returned no rows"}</span>
         </div>
       )}
       {canEdit && pendingChanges.length > 0 && (() => {

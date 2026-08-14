@@ -283,7 +283,7 @@ export function SQLEditor({
       <Editor height="100%" defaultLanguage={language} language={language} theme={dark ? "vs-dark" : "vs"}
         value={value} onChange={val => onChange(val || "")}
         onMount={(editor, m) => { editorRef.current = editor; setEditorMonaco(m); }}
-        options={{ minimap: { enabled: false }, fontSize: 14, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, readOnly: disabled }}
+        options={{ minimap: { enabled: false }, fontSize: 14, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, readOnly: disabled, renderLineHighlight: "none" }}
       />
     </div>
   );
