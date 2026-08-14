@@ -235,7 +235,7 @@ export default function DatabaseView() {
                     <div id="review-changes-slot" />
                   </div>
                 </div>
-                <div className="flex-1 overflow-hidden pb-6">
+                <div className="flex-1 overflow-hidden">
                   <ResultsViewer result={result} error={error} loading={loading}
                     schema={activeTab.schema} table={activeTab.table}
                     onRefresh={fetchData}

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, KeyRound, ChevronRight, Trash2, CheckCircle2 } from "lucide-react";
+import { Loader2, KeyRound, ChevronRight, Trash2, RotateCcw, Braces, List } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getInputType, isPotentialEnum, isNumericType, isTextareaType, toSqlParamValue, formatValueForInput, displayValueToString } from "./field-types";
 import type { RowMutationStatement } from "@/lib/db/types";
@@ -28,7 +28,6 @@ interface RowEditorPanelProps {
   onClose: () => void;
   onStageEdit: (changes: PendingChangeLike[]) => void;
   onStageInsert: (statement: RowMutationStatement, values: Record<string, unknown>) => void;
-  onSelectRow?: (row: Record<string, unknown>) => void;
   onDeleteRow?: (row: Record<string, unknown>) => void;
 }
 
@@ -58,7 +57,7 @@ function FieldControl({ column, value, enumValues, onValue }: {
   if (isBool) {
     return (
       <Select value={value} onValueChange={onValue}>
-        <SelectTrigger className="h-8"><SelectValue placeholder="NULL" /></SelectTrigger>
+        <SelectTrigger className="h-9"><SelectValue placeholder="NULL" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">NULL</SelectItem>
           <SelectItem value="true">true</SelectItem>
@@ -70,7 +69,7 @@ function FieldControl({ column, value, enumValues, onValue }: {
   if (isEnum) {
     return (
       <Select value={value} onValueChange={onValue}>
-        <SelectTrigger className="h-8"><SelectValue placeholder="NULL" /></SelectTrigger>
+        <SelectTrigger className="h-9"><SelectValue placeholder="NULL" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">NULL</SelectItem>
           {enumValues!.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
@@ -81,24 +80,26 @@ function FieldControl({ column, value, enumValues, onValue }: {
   const type = inputType === 'date' ? 'date' : inputType === 'datetime-local' ? 'datetime-local' : 'text';
   if (isNumericType(column.dataType)) {
     return (
-      <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-8 font-mono text-xs" type="number" inputMode="decimal" />
+      <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type="number" inputMode="decimal" />
     );
   }
   if (isTextareaType(column.dataType)) {
     return (
-      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="min-h-[72px] font-mono text-xs" rows={3} />
+      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="min-h-[120px] font-mono text-xs leading-relaxed" rows={4} />
     );
   }
   return (
-    <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-8 font-mono text-xs" type={type} />
+    <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type={type} />
   );
 }
 
-export function RowEditorPanel({ open, mode, connectionId, schema, table, columns, pkColumns, row, onClose, onStageEdit, onStageInsert, onSelectRow, onDeleteRow }: RowEditorPanelProps) {
+export function RowEditorPanel({ open, mode, connectionId, schema, table, columns, pkColumns, row, onClose, onStageEdit, onStageInsert, onDeleteRow }: RowEditorPanelProps) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [enumValues, setEnumValues] = useState<Record<string, string[] | null>>({});
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [view, setView] = useState<'fields' | 'json'>('fields');
+  const [jsonText, setJsonText] = useState('');
 
   const pkSet = useMemo(() => new Set(pkColumns), [pkColumns]);
 
@@ -106,6 +107,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
     if (!open) return;
     setValidationError(null);
     setSaving(false);
+    setView('fields');
     // Pre-fill from the row being edited; blank for insert.
     const next: Record<string, string> = {};
     for (const col of columns) {
@@ -116,6 +118,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
       }
     }
     setValues(next);
+    setJsonText(JSON.stringify(next, null, 2));
     // Fetch enum labels for maybe-enum columns (per column dataType).
     const fetchEnums = async () => {
       const out: Record<string, string[] | null> = {};
@@ -135,7 +138,32 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
 
   if (!open) return null;
 
-  const setValue = (col: string, v: string) => setValues(prev => ({ ...prev, [col]: v }));
+  const setValue = (col: string, v: string) => {
+    setValues(prev => {
+      const next = { ...prev, [col]: v };
+      setJsonText(JSON.stringify(next, null, 2));
+      return next;
+    });
+  };
+
+  const switchView = (next: 'fields' | 'json') => {
+    if (next === 'json') {
+      setJsonText(JSON.stringify(values, null, 2));
+    }
+    setView(next);
+  };
+
+  /** Restore all fields to the actual DB values (discard unsaved edits). */
+  const handleRestore = () => {
+    if (!row) return;
+    const next: Record<string, string> = {};
+    for (const col of columns) {
+      next[col.columnName] = formatValueForInput(row[col.columnName] ?? null, getInputType(col.dataType));
+    }
+    setValues(next);
+    setJsonText(JSON.stringify(next, null, 2));
+    setValidationError(null);
+  };
 
   /** A column is required on insert when it is NOT NULL and has no default. */
   const isRequired = (col: RowEditorColumn) =>
@@ -161,6 +189,49 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
         })(),
         originalValue: row[col.columnName],
         newValue: raw,
+      });
+    }
+    if (changes.length === 0) { onClose(); return; }
+    setSaving(true);
+    onStageEdit(changes);
+    setSaving(false);
+    onClose();
+  };
+
+  const handleSaveFromJson = () => {
+    if (!row) return;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      setValidationError('Invalid JSON — fix the syntax before staging.');
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      setValidationError('JSON must be an object of column → value.');
+      return;
+    }
+    const changes: PendingChangeLike[] = [];
+    const idBase = `${schema}.${table}-${Date.now()}`;
+    for (const col of columns) {
+      if (!(col.columnName in parsed)) continue; // omitted column → unchanged
+      const newVal = parsed[col.columnName];
+      const original = row[col.columnName];
+      const normalized = newVal === null ? '' : typeof newVal === 'string' ? newVal : displayValueToString(newVal);
+      const originalStr = formatValueForInput(original ?? null, getInputType(col.dataType));
+      if (normalized === originalStr) continue;
+      changes.push({
+        id: `${idBase}-${col.columnName}`,
+        schema, table, op: 'update',
+        columnName: col.columnName,
+        dataType: col.dataType,
+        pkValues: (() => {
+          const pks: Record<string, unknown> = {};
+          for (const pk of pkColumns) if (pk in (row || {})) pks[pk] = row[pk];
+          return pks;
+        })(),
+        originalValue: original,
+        newValue: normalized,
       });
     }
     if (changes.length === 0) { onClose(); return; }
@@ -199,52 +270,80 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-3">
         <div className="min-w-0">
-          <p className="text-sm font-semibold leading-tight">{mode === 'edit' ? 'Edit Row' : 'Insert Row'}</p>
-          <p className="truncate font-mono text-xs text-muted-foreground">{schema}.{table}</p>
+          <p className="truncate text-sm font-semibold leading-tight">{mode === 'edit' ? 'Edit Row' : 'Insert Row'}</p>
         </div>
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} title="Close editor"><ChevronRight className="h-4 w-4" /></Button>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 py-3">
-        <div className="space-y-3">
-          {columns.map(col => (
-            <div key={col.columnName} className="space-y-1.5">
-              <Label className="text-xs flex items-center gap-1.5">
-                <span className="font-mono">{col.columnName}</span>
-                {isRequired(col) && <span className="text-destructive">*</span>}
-                <span className="text-muted-foreground font-normal truncate">{col.dataType}</span>
-                {pkSet.has(col.columnName) && <KeyRound className="h-3 w-3 shrink-0 text-amber-500" />}
-              </Label>
-              <FieldControl
-                column={col}
-                value={values[col.columnName] ?? ''}
-                enumValues={enumValues[col.columnName] ?? null}
-                onValue={v => setValue(col.columnName, v)}
-              />
-            </div>
-          ))}
+      <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
+        <div className="flex items-center rounded-md border border-border p-0.5">
+          <button
+            onClick={() => switchView('fields')}
+            className={cn("flex h-6 items-center gap-1 rounded px-2 text-xs transition-colors", view === 'fields' ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}
+          >
+            <List className="h-3 w-3" />Fields
+          </button>
+          <button
+            onClick={() => switchView('json')}
+            className={cn("flex h-6 items-center gap-1 rounded px-2 text-xs transition-colors", view === 'json' ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}
+          >
+            <Braces className="h-3 w-3" />JSON
+          </button>
         </div>
+        <span className="ml-2 truncate font-mono text-xs text-muted-foreground">{schema}.{table}</span>
       </div>
+      {view === 'fields' ? (
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          <div className="space-y-4">
+            {columns.map(col => (
+              <div key={col.columnName} className="space-y-1.5">
+                <Label className="text-xs flex items-center gap-1.5 text-muted-foreground">
+                  <span className="font-mono">{col.columnName}</span>
+                  {isRequired(col) && <span className="text-destructive">*</span>}
+                  <span className="text-muted-foreground/60 font-normal truncate">{col.dataType}</span>
+                  {pkSet.has(col.columnName) && <KeyRound className="h-3 w-3 shrink-0 text-amber-500/70" />}
+                </Label>
+                <FieldControl
+                  column={col}
+                  value={values[col.columnName] ?? ''}
+                  enumValues={enumValues[col.columnName] ?? null}
+                  onValue={v => setValue(col.columnName, v)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col px-3 py-3">
+          <Textarea
+            value={jsonText}
+            onChange={e => setJsonText(e.target.value)}
+            placeholder="{ }"
+            className="flex-1 min-h-0 resize-none font-mono text-xs leading-relaxed"
+            spellCheck={false}
+          />
+        </div>
+      )}
       {validationError && (
         <div className="border-t border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive">{validationError}</div>
       )}
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
         <div className="flex items-center gap-2">
+          {mode === 'edit' && row && (
+            <Button variant="outline" size="sm" onClick={handleRestore} disabled={saving} title="Discard edits and restore DB values">
+              <RotateCcw className="h-3.5 w-3.5 mr-1" />Restore
+            </Button>
+          )}
           {mode === 'edit' && row && onDeleteRow && (
             <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onDeleteRow(row)} disabled={saving}>
               <Trash2 className="h-3.5 w-3.5 mr-1" />Delete
             </Button>
           )}
-          {mode === 'edit' && row && onSelectRow && (
-            <Button variant="outline" size="sm" onClick={() => onSelectRow(row)} disabled={saving}>
-              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Select
-            </Button>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button size="sm" onClick={mode === 'edit' ? handleSaveEdit : handleInsert} disabled={saving}>
+          <Button size="sm" onClick={mode === 'edit' ? (view === 'json' ? handleSaveFromJson : handleSaveEdit) : handleInsert} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             {mode === 'edit' ? 'Stage Changes' : 'Stage Insert'}
           </Button>

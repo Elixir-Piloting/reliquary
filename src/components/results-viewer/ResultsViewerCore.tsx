@@ -179,7 +179,6 @@ export function ResultsViewer({
         onClose={() => { rightSidebar.closeRight(); setEditor(null); }}
         onStageEdit={handleStageRowEdits}
         onStageInsert={handleInsertSubmit}
-        onSelectRow={handleSelectRow}
         onDeleteRow={handleDeleteRowFromEditor}
       />
     );
@@ -252,16 +251,6 @@ export function ResultsViewer({
   const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
     setEditor({ mode: 'edit', row });
-  };
-
-  /** Select the given row (by PK match) in the grid. */
-  const handleSelectRow = (row: Record<string, unknown>) => {
-    const idx = sortedRows.findIndex(r =>
-      Object.entries(getPkValues(row)).every(([k, v]) => r[k] === v)
-    );
-    if (idx === -1) return;
-    setSelectedRows(prev => { const n = new Set(prev); n.add(idx); return n; });
-    toast.success("Row selected");
   };
 
   /** Stage a delete for the row shown in the sidebar editor, then close it. */
