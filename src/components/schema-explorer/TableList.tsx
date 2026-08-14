@@ -1,4 +1,5 @@
 "use client";
+import * as React from "react";
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Table2, Eye, Layers, Loader2, Plus, RefreshCw, ShieldAlert, ChevronRight, ChevronDown, MoreVertical, FileCode2, ClipboardCopy, Pencil, CopyPlus, Download, Eraser, Trash2 } from "lucide-react";
@@ -11,6 +12,10 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuPortal,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
+  ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
+} from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -179,6 +184,57 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
     setBusy(false);
   };
 
+  /** Shared actions used by both the ⋮ dropdown and the right-click context menu. */
+  const renderTableMenuItems = (
+    table: Table,
+    menu: {
+      Item: typeof DropdownMenuItem;
+      Separator: typeof DropdownMenuSeparator;
+      Sub: typeof DropdownMenuSub;
+      SubTrigger: typeof DropdownMenuSubTrigger;
+      SubContent: typeof DropdownMenuSubContent;
+      Portal: typeof DropdownMenuPortal;
+    }
+  ) => (
+    <>
+      <menu.Item onClick={() => openInEditor(table)}><FileCode2 className="h-4 w-4 mr-2" />Open in SQL editor</menu.Item>
+      <menu.Item onClick={() => copySchema(table)}><ClipboardCopy className="h-4 w-4 mr-2" />Copy table schema</menu.Item>
+      <menu.Item onClick={() => editTable(table)}><Pencil className="h-4 w-4 mr-2" />Edit table</menu.Item>
+      <menu.Item onClick={() => { setMenuTable(table); setDuplicateName(`${table.name}_copy`); setDuplicateOpen(true); }}><CopyPlus className="h-4 w-4 mr-2" />Duplicate table</menu.Item>
+      <menu.Sub>
+        <menu.SubTrigger><Download className="h-4 w-4 mr-2" />Export data</menu.SubTrigger>
+        <menu.Portal>
+          <menu.SubContent>
+            <menu.Item onClick={() => { setMenuTable(table); exportData("csv"); }}>CSV</menu.Item>
+            <menu.Item onClick={() => { setMenuTable(table); exportData("json"); }}>JSON</menu.Item>
+            <menu.Item onClick={() => { setMenuTable(table); exportData("sql"); }}>SQL</menu.Item>
+          </menu.SubContent>
+        </menu.Portal>
+      </menu.Sub>
+      <menu.Separator />
+      <menu.Item className="text-destructive focus:text-destructive" onClick={() => setConfirmAction({ kind: "empty", table })}><Eraser className="h-4 w-4 mr-2" />Empty table</menu.Item>
+      <menu.Item className="text-destructive focus:text-destructive" onClick={() => setConfirmAction({ kind: "delete", table })}><Trash2 className="h-4 w-4 mr-2" />Delete table</menu.Item>
+    </>
+  );
+
+  const dropdownMenu = {
+    Item: DropdownMenuItem,
+    Separator: DropdownMenuSeparator,
+    Sub: DropdownMenuSub,
+    SubTrigger: DropdownMenuSubTrigger,
+    SubContent: DropdownMenuSubContent,
+    Portal: DropdownMenuPortal,
+  };
+
+  const contextMenu = {
+    Item: ContextMenuItem,
+    Separator: ContextMenuSeparator,
+    Sub: ContextMenuSub,
+    SubTrigger: ContextMenuSubTrigger,
+    SubContent: ContextMenuSubContent,
+    Portal: React.Fragment as unknown as typeof DropdownMenuPortal,
+  };
+
   return (
     <div className="space-y-1">
       {selectedSchema && (
@@ -221,67 +277,58 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
             const cols = columns[key];
             return (
               <div key={key}>
-                <div className="group flex items-center w-full">
-                  <button onClick={() => toggleExpand(table)}
-                    className="shrink-0 p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
-                    aria-label={isOpen ? "Collapse columns" : "Expand columns"}>
-                    {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                  </button>
-                  <TooltipProvider delayDuration={600}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="shrink-0 flex items-center">
-                          <KindIcon className="h-4 w-4" />
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="right"><p>{kindLabel}</p></TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <button onClick={() => onTableSelect(table.schema, table.name)}
-                    className="flex-1 flex items-center gap-2 px-1.5 py-1.5 rounded-lg text-sm hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground text-left min-w-0">
-                    <span className="flex-1 text-left truncate">{table.name}</span>
-                    {table.hasRls && (
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <div className="group flex items-center w-full">
+                      <button onClick={() => toggleExpand(table)}
+                        className="shrink-0 p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+                        aria-label={isOpen ? "Collapse columns" : "Expand columns"}>
+                        {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      </button>
                       <TooltipProvider delayDuration={600}>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span className="shrink-0 flex items-center">
-                              <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+                              <KindIcon className="h-4 w-4" />
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent side="right"><p>Row Level Security enabled</p></TooltipContent>
+                          <TooltipContent side="right"><p>{kindLabel}</p></TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                    )}
-                  </button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        className="shrink-0 p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-                        aria-label={`Actions for ${table.name}`}>
-                        <MoreVertical className="h-4 w-4" />
+                      <button onClick={() => onTableSelect(table.schema, table.name)}
+                        className="flex-1 flex items-center gap-2 px-1.5 py-1.5 rounded-lg text-sm hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground text-left min-w-0">
+                        <span className="flex-1 text-left truncate">{table.name}</span>
+                        {table.hasRls && (
+                          <TooltipProvider delayDuration={600}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="shrink-0 flex items-center">
+                                  <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="right"><p>Row Level Security enabled</p></TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
                       </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-52">
-                      <DropdownMenuItem onClick={() => openInEditor(table)}><FileCode2 className="h-4 w-4 mr-2" />Open in SQL editor</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => copySchema(table)}><ClipboardCopy className="h-4 w-4 mr-2" />Copy table schema</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => editTable(table)}><Pencil className="h-4 w-4 mr-2" />Edit table</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => { setMenuTable(table); setDuplicateName(`${table.name}_copy`); setDuplicateOpen(true); }}><CopyPlus className="h-4 w-4 mr-2" />Duplicate table</DropdownMenuItem>
-                      <DropdownMenuSub>
-                        <DropdownMenuSubTrigger><Download className="h-4 w-4 mr-2" />Export data</DropdownMenuSubTrigger>
-                        <DropdownMenuPortal>
-                          <DropdownMenuSubContent>
-                            <DropdownMenuItem onClick={() => { setMenuTable(table); exportData("csv"); }}>CSV</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => { setMenuTable(table); exportData("json"); }}>JSON</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => { setMenuTable(table); exportData("sql"); }}>SQL</DropdownMenuItem>
-                          </DropdownMenuSubContent>
-                        </DropdownMenuPortal>
-                      </DropdownMenuSub>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setConfirmAction({ kind: "empty", table })}><Eraser className="h-4 w-4 mr-2" />Empty table</DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setConfirmAction({ kind: "delete", table })}><Trash2 className="h-4 w-4 mr-2" />Delete table</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            className="shrink-0 p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                            aria-label={`Actions for ${table.name}`}>
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52">
+                          {renderTableMenuItems(table, dropdownMenu)}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent className="w-52">
+                    {renderTableMenuItems(table, contextMenu)}
+                  </ContextMenuContent>
+                </ContextMenu>
                 {isOpen && (
                   <div className="ml-6 pl-3 border-l border-border/60 space-y-0.5 py-0.5">
                     {columnsLoading[key] ? (
