@@ -4,7 +4,6 @@ import { createPortal } from "react-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check, Copy, X, Plus, Trash2, FileDown, Download, CheckCircle2 } from "lucide-react";
 import {
@@ -14,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult, ResultsViewerProps, PendingChange } from "./types";
-import { ReviewChangesSheet } from "./review-changes-sheet";
+import { ReviewChangesPanel } from "./review-changes-panel";
 import { RowEditorPanel } from "./row-editor-panel";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useRightSidebar } from "@/components/right-sidebar-context";
@@ -109,22 +108,6 @@ function InlineSelect({ value, options, labels, onChange, onSave, onCancel }: {
   );
 }
 
-function ResultsLoadingSkeleton() {
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-auto">
-        <Table><TableHeader className="sticky top-0 bg-card z-50"><TableRow>
-          {Array.from({ length: 6 }).map((_, i) => (<TableHead key={i}><Skeleton className="h-4 w-20" /></TableHead>))}
-        </TableRow></TableHeader><TableBody>
-          {Array.from({ length: 10 }).map((_, rowIdx) => (<TableRow key={rowIdx}>
-            {Array.from({ length: 6 }).map((_, colIdx) => (<TableCell key={colIdx}><Skeleton className="h-4 w-full" /></TableCell>))}
-          </TableRow>))}
-        </TableBody></Table>
-      </div>
-    </div>
-  );
-}
-
 function formatExecutionTime(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(2)} s`;
@@ -201,6 +184,22 @@ export function ResultsViewer({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, canEdit, schema, table, connectionId, columnsMeta, pkColumns]);
+
+  // Show the staged-changes review panel in the right sidebar when the user
+  // clicks "Review (N) changes" — reuses the sidebar instead of a separate sheet.
+  useEffect(() => {
+    if (!showReviewSheet) return;
+    rightSidebar.openRight(
+      <ReviewChangesPanel
+        changes={pendingChanges}
+        onUnstage={handleUnstage}
+        onApplyAll={handleApplyAll}
+        applying={applying}
+        onClose={() => { setShowReviewSheet(false); rightSidebar.closeRight(); }}
+      />
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showReviewSheet, pendingChanges, applying]);
 
   const exportResult = useMemo(() => displayResult ? {
     columns: displayResult.columns || [],
@@ -450,9 +449,8 @@ export function ResultsViewer({
     if (exportResult) downloadText(`${exportBaseName}.json`, toJson(exportResult), 'application/json');
   };
 
-  if (loading) return <ResultsLoadingSkeleton />;
   if (error) return <div className="p-4 text-sm text-destructive bg-destructive/10 rounded-md"><div className="font-medium mb-1">Error</div><div className="font-mono text-xs">{error}</div></div>;
-  if (!displayResult) return (
+  if (!displayResult && !loading) return (
     <div className="flex h-full items-center justify-center">
       <span className="text-sm text-muted-foreground">No results to display</span>
     </div>
@@ -515,14 +513,25 @@ export function ResultsViewer({
         if (!exportSlot) return null;
         return createPortal(exportMenu, exportSlot);
       })()}
-      {hasRows ? (
+      {loading ? (
+        <div className="flex-1 overflow-auto">
+          <Table className="min-w-max">
+            <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
+              <TableRow className="hover:bg-muted/50">
+                <TableHead className="sticky left-0 z-30 bg-table-header pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]" style={{ width: 'var(--checkbox-w)' }}><Checkbox disabled /></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody />
+          </Table>
+        </div>
+      ) : hasRows ? (
         <>
           <div className="flex-1 overflow-auto">
             <Table className="min-w-max">
                 <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
                 <TableRow className="hover:bg-muted/50">
                   <TableHead className="sticky left-0 z-30 bg-table-header pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
-                  {(displayResult.columns || []).map((field, colIdx) => (
+                  {(displayResult!.columns || []).map((field, colIdx) => (
                     <TableHead key={field.name} className={cn("group select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none", field.name === 'id' && "sticky z-30 bg-table-header")} style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}>
                       <ContextMenu>
                         <ContextMenuTrigger asChild>
@@ -581,7 +590,7 @@ export function ResultsViewer({
                   return (
                     <TableRow key={`row-${actualIndex}`} className={cn("hover:bg-transparent", pendingDelete && "opacity-40", canEdit && "cursor-pointer")} data-state={isSelected ? "selected" : undefined} onClick={() => handleRowClick(row)}>
                       <TableCell onClick={(e) => e.stopPropagation()} className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
-                      {(displayResult.columns || []).map((field, colIdx) => {
+                      {(displayResult!.columns || []).map((field, colIdx) => {
                         const value = row[field.name]; const isNull = value === null;
                         const change = getChangeForCell(row, field.name);
                         const displayValue = change ? change.newValue : value;
@@ -631,7 +640,7 @@ export function ResultsViewer({
                     <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}>
                       <span className="inline-block h-4 w-4 rounded-sm border border-dashed border-emerald-500/50" aria-hidden />
                     </TableCell>
-                    {(displayResult.columns || []).map(field => {
+                    {(displayResult!.columns || []).map(field => {
                       const value = values[field.name];
                       const showNull = value === null || value === undefined;
                       return (
@@ -656,7 +665,7 @@ export function ResultsViewer({
             <span className="text-sm text-muted-foreground">This table contains no rows</span>
           ) : (
             <div className="w-full max-w-lg">
-              <QuerySuccessBanner result={displayResult} />
+              <QuerySuccessBanner result={displayResult!} />
             </div>
           )}
         </div>
@@ -671,10 +680,6 @@ export function ResultsViewer({
             Review ({pendingChanges.length}) change{pendingChanges.length !== 1 ? 's' : ''}
           </Button>, slot);
       })()}
-      {canEdit && (
-        <ReviewChangesSheet open={showReviewSheet} onOpenChange={setShowReviewSheet}
-          changes={pendingChanges} onUnstage={handleUnstage} onApplyAll={handleApplyAll} applying={applying} />
-      )}
       {canEdit && (
         <ConfirmDialog
           open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}

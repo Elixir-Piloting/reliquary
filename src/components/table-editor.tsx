@@ -279,7 +279,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   }, [isCreate, createSql, schema, tableName]);
 
   useEffect(() => {
-    return () => rightSidebar.closeRight();
+    return () => rightSidebar.setContent(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

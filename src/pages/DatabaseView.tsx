@@ -9,7 +9,6 @@ import { QueryPane } from "@/components/query-pane";
 import SchemaVisualizer from "@/components/schema-visualizer";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Persistence } from "@/lib/persistence";
 import API from "@/lib/ipc-client";
 import type { QueryResult, ColumnInfo } from "@/lib/db/types";
@@ -20,29 +19,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000];
-
-function TableLoadingSkeleton() {
-  return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="h-14 border-b border-border flex items-center justify-between px-6 shrink-0 bg-muted/20">
-        <div><Skeleton className="h-5 w-32 mb-1" /><Skeleton className="h-3 w-16" /></div>
-        <div className="flex items-center gap-2"><Skeleton className="h-8 w-20" /></div>
-      </div>
-      <div className="flex-1 overflow-hidden">
-        <div className="h-full flex flex-col">
-          <div className="flex items-center gap-4 mx-6">
-            <Skeleton className="h-8 w-16" /><Skeleton className="h-8 w-20" /><Skeleton className="h-8 w-20" /><Skeleton className="h-8 w-28" />
-          </div>
-          <div className="flex-1 mt-4 overflow-auto px-6 pb-6">
-            <div className="bg-card rounded-lg border border-border p-4">
-              <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => (<Skeleton key={i} className="h-8 w-full" />))}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function DatabaseView() {
   const { connection: connectionId } = useParams<{ connection: string }>();
@@ -291,7 +267,7 @@ export default function DatabaseView() {
           <div className="flex items-center gap-3">
             <div id="table-actions-slot" />
             <Button variant="outline" size="sm" disabled={loading} onClick={fetchData}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin-burst" /> : <RefreshCw className="h-4 w-4" />}
             </Button>
             {result && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
