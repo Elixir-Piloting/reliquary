@@ -279,7 +279,14 @@ export function ResultsViewer({
 
   const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
-    setEditor({ mode: 'edit', row });
+    // Show staged (uncommitted) values in the editor rather than DB values.
+    const merged: Record<string, unknown> = { ...row };
+    for (const change of pendingChanges) {
+      if (change.op === 'update' && change.columnName && Object.entries(change.pkValues).every(([k, v]) => row[k] === v)) {
+        merged[change.columnName] = change.newValue;
+      }
+    }
+    setEditor({ mode: 'edit', row: merged });
   };
 
   /** Stage a delete for the row shown in the sidebar editor, then close it. */

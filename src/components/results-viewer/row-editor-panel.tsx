@@ -45,11 +45,12 @@ export interface PendingChangeLike {
   newValue: string;
 }
 
-function FieldControl({ column, value, enumValues, onValue }: {
+function FieldControl({ column, value, enumValues, onValue, disabled }: {
   column: RowEditorColumn;
   value: string;
   enumValues: string[] | null;
   onValue: (v: string) => void;
+  disabled?: boolean;
 }) {
   const inputType = getInputType(column.dataType);
   const isBool = inputType === 'select-boolean';
@@ -57,7 +58,7 @@ function FieldControl({ column, value, enumValues, onValue }: {
 
   if (isBool) {
     return (
-      <Select value={value} onValueChange={onValue}>
+      <Select value={value} onValueChange={onValue} disabled={disabled}>
         <SelectTrigger className="h-9"><SelectValue placeholder="NULL" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">NULL</SelectItem>
@@ -69,7 +70,7 @@ function FieldControl({ column, value, enumValues, onValue }: {
   }
   if (isEnum) {
     return (
-      <Select value={value} onValueChange={onValue}>
+      <Select value={value} onValueChange={onValue} disabled={disabled}>
         <SelectTrigger className="h-9"><SelectValue placeholder="NULL" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">NULL</SelectItem>
@@ -81,16 +82,16 @@ function FieldControl({ column, value, enumValues, onValue }: {
   const type = inputType === 'date' ? 'date' : inputType === 'datetime-local' ? 'datetime-local' : 'text';
   if (isNumericType(column.dataType)) {
     return (
-      <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type="number" inputMode="decimal" />
+      <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type="number" inputMode="decimal" disabled={disabled} />
     );
   }
   if (isTextareaType(column.dataType)) {
     return (
-      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="min-h-[120px] font-mono text-xs leading-relaxed" rows={4} />
+      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="min-h-[120px] font-mono text-xs leading-relaxed" rows={4} disabled={disabled} />
     );
   }
   return (
-    <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type={type} />
+    <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type={type} disabled={disabled} />
   );
 }
 
@@ -320,22 +321,31 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
       {view === 'fields' ? (
         <div className="flex-1 overflow-y-auto px-4 py-4">
           <div className="space-y-4">
-            {columns.map(col => (
-              <div key={col.columnName} className="space-y-1.5">
-                <Label className="text-xs flex items-center gap-1.5 text-muted-foreground">
-                  <span className="font-mono">{col.columnName}</span>
-                  {isRequired(col) && <span className="text-destructive">*</span>}
-                  <span className="text-muted-foreground/60 font-normal truncate">{col.dataType}</span>
-                  {pkSet.has(col.columnName) && <KeyRound className="h-3 w-3 shrink-0 text-amber-500/70" />}
-                </Label>
-                <FieldControl
-                  column={col}
-                  value={values[col.columnName] ?? ''}
-                  enumValues={enumValues[col.columnName] ?? null}
-                  onValue={v => setValue(col.columnName, v)}
-                />
-              </div>
-            ))}
+            {columns.map(col => {
+              const disabled = mode === 'insert' && !!col.isIdentity;
+              return (
+                <div key={col.columnName} className="space-y-1.5">
+                  <Label className="text-xs flex items-center gap-1.5 text-muted-foreground">
+                    <span className="font-mono">{col.columnName}</span>
+                    {isRequired(col) && (
+                      <span className="rounded bg-destructive/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-destructive">Required</span>
+                    )}
+                    {disabled && (
+                      <span className="rounded bg-muted px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Auto</span>
+                    )}
+                    <span className="text-muted-foreground/60 font-normal truncate">{col.dataType}</span>
+                    {pkSet.has(col.columnName) && <KeyRound className="h-3 w-3 shrink-0 text-amber-500/70" />}
+                  </Label>
+                  <FieldControl
+                    column={col}
+                    value={values[col.columnName] ?? ''}
+                    enumValues={enumValues[col.columnName] ?? null}
+                    onValue={v => setValue(col.columnName, v)}
+                    disabled={disabled}
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
