@@ -4,23 +4,44 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, X, Loader2, Save, ArrowLeft, Check } from "lucide-react";
+import { Plus, X, Loader2, Save, ArrowLeft, Check, ChevronUp, ChevronDown, KeyRound } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ColumnInfo } from "@/lib/db/types";
-import { cn } from "@/lib/utils";
+import type { ColumnInfo, TableInfo } from "@/lib/db/types";
 import { useRightSidebar } from "@/components/right-sidebar-context";
 import { CreateTableSqlPanel } from "@/components/create-table-sql-panel";
 
 const COLUMN_TYPES = ["VARCHAR", "TEXT", "INTEGER", "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "REAL", "DOUBLE PRECISION", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ", "UUID", "JSON", "JSONB"];
 
+/** Types that accept a parameter (length / precision) in the DDL. */
+const PARAM_TYPES = new Set(["VARCHAR", "CHAR", "DECIMAL", "NUMERIC", "TIMESTAMP", "TIMESTAMPTZ", "TIME"]);
+
+const FK_ACTIONS = ["NO ACTION", "CASCADE", "SET NULL", "RESTRICT"] as const;
+
 interface NewColumn {
   name: string;
   type: string;
+  parameter: string;
   nullable: boolean;
   defaultValue: string;
   primaryKey: boolean;
+  autoIncrement: boolean;
+  unique: boolean;
 }
+
+interface ForeignKeyDraft {
+  column: string;
+  refSchema: string;
+  refTable: string;
+  refColumn: string;
+  onDelete: string;
+  onUpdate: string;
+}
+
+const emptyColumn = (): NewColumn => ({ name: "", type: "TEXT", parameter: "", nullable: true, defaultValue: "", primaryKey: false, autoIncrement: false, unique: false });
+
+const emptyFk = (schema: string): ForeignKeyDraft => ({ column: "", refSchema: schema, refTable: "", refColumn: "", onDelete: "NO ACTION", onUpdate: "NO ACTION" });
 
 interface TableEditorProps {
   mode: "create" | "edit";
@@ -35,7 +56,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const isCreate = mode === "create";
   const [tableName, setTableName] = useState(isCreate ? "" : table || "");
   const [columns, setColumns] = useState<NewColumn[]>(isCreate
-    ? [{ name: "id", type: "BIGINT", nullable: false, defaultValue: "", primaryKey: true }]
+    ? [{ name: "id", type: "BIGINT", parameter: "", nullable: false, defaultValue: "", primaryKey: true, autoIncrement: true, unique: false }]
     : []);
   const [existingCols, setExistingCols] = useState<ColumnInfo[]>([]);
   const [loading, setLoading] = useState(!isCreate);
@@ -43,6 +64,13 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   // Inline-edit state for existing columns
   const [editing, setEditing] = useState<{ col: string; field: "name" | "default" } | null>(null);
   const [draft, setDraft] = useState("");
+
+  // Foreign keys (UI only for now).
+  const [fkOpen, setFkOpen] = useState(false);
+  const [fkDrafts, setFkDrafts] = useState<ForeignKeyDraft[]>([]);
+  const [fkForm, setFkForm] = useState<ForeignKeyDraft>(() => emptyFk(schema));
+  const [refTables, setRefTables] = useState<TableInfo[]>([]);
+  const [refColumns, setRefColumns] = useState<ColumnInfo[]>([]);
 
   const reload = useCallback(async () => {
     if (!table) return;
@@ -60,16 +88,45 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     reload().finally(() => setLoading(false));
   }, [isCreate, table, schema, connectionId, reload]);
 
-  const addColumn = () => setColumns(prev => [...prev, { name: "", type: "TEXT", nullable: true, defaultValue: "", primaryKey: false }]);
+  useEffect(() => {
+    if (!isCreate) return;
+    // Preload existing tables for the FK reference dropdown.
+    invoke<TableInfo[]>("get_tables", { connectionId, schema })
+      .then(ts => setRefTables(ts || []))
+      .catch(() => setRefTables([]));
+  }, [isCreate, connectionId, schema]);
+
+  useEffect(() => {
+    if (!fkForm.refTable) { setRefColumns([]); return; }
+    invoke<ColumnInfo[]>("get_columns", { connectionId, schema: fkForm.refSchema, table: fkForm.refTable })
+      .then(cs => { setRefColumns(cs || []); setFkForm(f => ({ ...f, refColumn: cs && cs.length > 0 ? "" : "" })); })
+      .catch(() => setRefColumns([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fkForm.refTable, fkForm.refSchema, connectionId]);
+
+  const addColumn = () => setColumns(prev => [...prev, emptyColumn()]);
   const removeColumn = (i: number) => setColumns(prev => prev.filter((_, idx) => idx !== i));
   const updateColumn = (i: number, field: keyof NewColumn, value: any) =>
     setColumns(prev => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
 
+  const moveColumn = (i: number, dir: -1 | 1) => {
+    setColumns(prev => {
+      const next = [...prev];
+      const j = i + dir;
+      if (j < 0 || j >= next.length) return prev;
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+
   const buildCreateSQL = useCallback((): string => {
     const cols = columns.map(c => {
       let def = `"${c.name}" ${c.type}`;
+      if (PARAM_TYPES.has(c.type.toUpperCase()) && c.parameter.trim()) def += `(${c.parameter.trim()})`;
+      if (c.autoIncrement && /INT|SERIAL/i.test(c.type)) def += " GENERATED ALWAYS AS IDENTITY";
       if (c.primaryKey) def += " PRIMARY KEY";
-      if (!c.nullable && !c.primaryKey) def += " NOT NULL";
+      else if (!c.nullable) def += " NOT NULL";
+      if (c.unique && !c.primaryKey) def += " UNIQUE";
       if (c.defaultValue) def += ` DEFAULT ${c.defaultValue}`;
       return def;
     });
@@ -125,6 +182,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const handleAddColumn = async (col: NewColumn) => {
     if (!table || !col.name.trim()) { toast.error("Column name is required"); return; }
     let def = `"${col.name}" ${col.type}`;
+    if (PARAM_TYPES.has(col.type.toUpperCase()) && col.parameter.trim()) def += `(${col.parameter.trim()})`;
     if (!col.nullable) def += " NOT NULL";
     if (col.defaultValue) def += ` DEFAULT ${col.defaultValue}`;
     await runAlter(`ALTER TABLE "${schema}"."${table}" ADD COLUMN ${def};`, `Column "${col.name}" added`);
@@ -160,7 +218,26 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     await runAlter(sql, `"${col.columnName}" ${col.isNullable ? "set NOT NULL" : "nullable"}`);
   };
 
+  const addFk = () => {
+    const fk = { ...fkForm };
+    setFkDrafts(prev => [...prev, fk]);
+    setFkForm(emptyFk(schema));
+    setFkOpen(false);
+  };
+
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+
+  const headerBtn = (isCreate ? (
+    <Button onClick={handleCreate} disabled={saving || !tableName.trim()} size="sm">
+      {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+      Create Table
+    </Button>
+  ) : (
+    <Button onClick={onDone} size="sm" disabled={saving}>
+      {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
+      Done
+    </Button>
+  ));
 
   return (
     <div className="flex flex-col h-full">
@@ -169,10 +246,12 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
         <h2 className="text-sm font-semibold">
           {isCreate ? `New Table in "${schema}"` : `Edit ${schema}.${table}`}
         </h2>
-        {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        <div className="flex-1" />
+        <Button variant="outline" size="sm" onClick={onDone} disabled={saving}>Cancel</Button>
+        {headerBtn}
       </div>
       <div className="flex-1 overflow-auto px-6 pb-6 pt-4">
-        <div className="space-y-6">
+        <div className="space-y-6 max-w-4xl">
           {isCreate && (
             <div className="space-y-2">
               <Label>Table Name</Label>
@@ -241,66 +320,158 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
             </div>
           )}
 
+          {/* Column editor — header row + rows */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label>{isCreate ? "Columns" : "Add New Columns"}</Label>
-              <Button variant="outline" size="sm" onClick={addColumn}><Plus className="h-4 w-4 mr-1" />Add Column</Button>
-            </div>
-            {columns.map((col, i) => (
-              <div key={i} className="flex items-start gap-2 p-3 border border-border rounded-lg bg-muted/10">
-                <div className="flex-1 space-y-1">
-                  <Label className="text-xs">Name</Label>
-                  <Input value={col.name} onChange={e => updateColumn(i, "name", e.target.value)} placeholder="column_name" className="h-8 text-sm" />
-                </div>
-                <div className="w-32 space-y-1">
-                  <Label className="text-xs">Type</Label>
-                  <Select value={col.type} onValueChange={v => updateColumn(i, "type", v)}>
-                    <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                    <SelectContent>{COLUMN_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                {isCreate && (
-                  <div className="w-16 space-y-1">
-                    <Label className="text-xs">PK</Label>
-                    <Button variant={col.primaryKey ? "default" : "outline"} size="sm" onClick={() => updateColumn(i, "primaryKey", !col.primaryKey)} className="h-8 w-full">PK</Button>
-                  </div>
-                )}
-                <div className="w-16 space-y-1">
-                  <Label className="text-xs">Null</Label>
-                  <Button variant={!col.nullable ? "default" : "outline"} size="sm" onClick={() => updateColumn(i, "nullable", !col.nullable)} disabled={isCreate && col.primaryKey} className="h-8 w-full">NN</Button>
-                </div>
-                <div className="w-24 space-y-1">
-                  <Label className="text-xs">Default</Label>
-                  <Input value={col.defaultValue} onChange={e => updateColumn(i, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
-                </div>
-                <div className="flex flex-col gap-1 pt-5">
-                  {!isCreate && (
-                    <Button size="sm" onClick={() => handleAddColumn(col)} disabled={saving || !col.name.trim()} className="h-8" title="Add this column">
-                      <Check className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                  <Button variant="ghost" size="icon" onClick={() => removeColumn(i)} className="h-8 w-8"><X className="h-4 w-4" /></Button>
-                </div>
+            <Label>{isCreate ? "Columns" : "Add New Columns"}</Label>
+            <div className="border border-border rounded-lg overflow-hidden">
+              {/* Header */}
+              <div className="grid grid-cols-[2.5rem_1fr_9rem_5rem_7rem_1fr] md:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_10rem_1fr] lg:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_12rem_1fr] items-center gap-2 px-3 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b border-border">
+                <div className="flex items-center justify-center">#</div>
+                <div>Name</div>
+                <div>Type</div>
+                <div>Params</div>
+                <div>Default</div>
+                <div>Constraints</div>
+                <div />
               </div>
-            ))}
+              {columns.map((col, i) => {
+                const isLast = i === columns.length - 1;
+                const isFirst = i === 0;
+                const showParam = PARAM_TYPES.has(col.type.toUpperCase());
+                return (
+                  <div key={i} className="grid grid-cols-[2.5rem_1fr_9rem_5rem_7rem_1fr] md:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_10rem_1fr] lg:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_12rem_1fr] items-center gap-2 px-3 py-2 border-b border-border last:border-b-0 text-sm">
+                    {/* # + reorder */}
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-xs text-muted-foreground tabular-nums">{i + 1}</span>
+                      <div className="flex items-center">
+                        <button onClick={() => moveColumn(i, -1)} disabled={isFirst} className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move up"><ChevronUp className="h-3 w-3" /></button>
+                        <button onClick={() => moveColumn(i, 1)} disabled={isLast} className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move down"><ChevronDown className="h-3 w-3" /></button>
+                      </div>
+                    </div>
+                    <Input value={col.name} onChange={e => updateColumn(i, "name", e.target.value)} placeholder="column_name" className="h-8 text-sm" />
+                    <Select value={col.type} onValueChange={v => updateColumn(i, "type", v)}>
+                      <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
+                      <SelectContent>{COLUMN_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                    </Select>
+                    {showParam ? (
+                      <Input value={col.parameter} onChange={e => updateColumn(i, "parameter", e.target.value)} placeholder="(255)" className="h-8 text-sm" />
+                    ) : <div />}
+                    <Input value={col.defaultValue} onChange={e => updateColumn(i, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
+                    {/* Constraints */}
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Primary key">
+                        <Checkbox checked={col.primaryKey} onCheckedChange={(v) => { updateColumn(i, "primaryKey", !!v); if (v) updateColumn(i, "nullable", false); }} />PK
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Auto increment">
+                        <Checkbox checked={col.autoIncrement} onCheckedChange={(v) => updateColumn(i, "autoIncrement", !!v)} />AI
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Unique">
+                        <Checkbox checked={col.unique} onCheckedChange={(v) => updateColumn(i, "unique", !!v)} />UQ
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Nullable">
+                        <Checkbox checked={col.nullable} onCheckedChange={(v) => updateColumn(i, "nullable", !!v)} disabled={col.primaryKey} />Null
+                      </label>
+                    </div>
+                    <div className="flex items-center justify-end gap-1">
+                      {!isCreate && (
+                        <Button size="sm" onClick={() => handleAddColumn(col)} disabled={saving || !col.name.trim()} className="h-8" title="Add this column">
+                          <Check className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" onClick={() => removeColumn(i)} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Remove column"><X className="h-4 w-4" /></Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
             {columns.length === 0 && !isCreate && (
-              <p className="text-sm text-muted-foreground text-center py-4">No new columns queued. Click "Add Column" to add one, or edit existing columns above.</p>
+              <p className="text-sm text-muted-foreground text-center py-4">No new columns queued. Add one below.</p>
             )}
+            <Button variant="outline" size="sm" onClick={addColumn}><Plus className="h-4 w-4 mr-1" />Add Column</Button>
           </div>
+
+          {/* Foreign keys — UI only for now */}
+          {isCreate && (
+            <div className="space-y-3">
+              <Label>Foreign Keys</Label>
+              {fkDrafts.length > 0 && (
+                <div className="space-y-1.5">
+                  {fkDrafts.map((fk, i) => (
+                    <div key={i} className="flex items-center gap-2 border border-border rounded-md px-3 py-2 text-sm text-muted-foreground">
+                      <KeyRound className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                      <span className="font-mono">{fk.column || "?"}</span>
+                      <span>→</span>
+                      <span className="font-mono">{fk.refTable ? `${fk.refSchema}.${fk.refTable}.${fk.refColumn || "?"}` : "?"}</span>
+                      <span className="text-xs">ON DELETE {fk.onDelete} · ON UPDATE {fk.onUpdate}</span>
+                      <Button variant="ghost" size="icon" className="ml-auto h-6 w-6" onClick={() => setFkDrafts(prev => prev.filter((_, idx) => idx !== i))}><X className="h-3.5 w-3.5" /></Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {fkOpen ? (
+                <div className="border border-border rounded-lg p-4 space-y-3 bg-muted/10">
+                  <div className="flex items-center justify-between">
+                    <Label>Add Foreign Key</Label>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setFkOpen(false)}><X className="h-4 w-4" /></Button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Column</Label>
+                      <Select value={fkForm.column} onValueChange={v => setFkForm(f => ({ ...f, column: v }))}>
+                        <SelectTrigger className="h-8"><SelectValue placeholder="Select column" /></SelectTrigger>
+                        <SelectContent>
+                          {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Reference table</Label>
+                      <Select value={fkForm.refTable} onValueChange={v => setFkForm(f => ({ ...f, refTable: v }))}>
+                        <SelectTrigger className="h-8"><SelectValue placeholder="Select table" /></SelectTrigger>
+                        <SelectContent>
+                          {refTables.map(t => <SelectItem key={t.tableName} value={t.tableName}>{t.tableName}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Reference column</Label>
+                      <Select value={fkForm.refColumn} onValueChange={v => setFkForm(f => ({ ...f, refColumn: v }))} disabled={!fkForm.refTable}>
+                        <SelectTrigger className="h-8"><SelectValue placeholder="Select column" /></SelectTrigger>
+                        <SelectContent>
+                          {refColumns.map(c => <SelectItem key={c.columnName} value={c.columnName}>{c.columnName}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">On delete</Label>
+                        <Select value={fkForm.onDelete} onValueChange={v => setFkForm(f => ({ ...f, onDelete: v }))}>
+                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">On update</Label>
+                        <Select value={fkForm.onUpdate} onValueChange={v => setFkForm(f => ({ ...f, onUpdate: v }))}>
+                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                  <Button size="sm" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn}><KeyRound className="h-3.5 w-3.5 mr-1" />Add Foreign Key</Button>
+                </div>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => setFkOpen(true)}><KeyRound className="h-4 w-4 mr-1" />Add Foreign Key</Button>
+              )}
+            </div>
+          )}
 
           {isCreate && (
             <p className="text-sm text-muted-foreground">SQL preview is shown in the right sidebar (Row Inspector).</p>
           )}
         </div>
       </div>
-      {isCreate && (
-        <div className="shrink-0 border-t border-border bg-card/80 backdrop-blur-sm px-6 py-3 flex justify-end gap-2">
-          <Button variant="outline" onClick={onDone}>Cancel</Button>
-          <Button onClick={handleCreate} disabled={saving || !tableName.trim()}>
-            {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creating...</> : <><Save className="h-4 w-4 mr-2" />Create Table</>}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
