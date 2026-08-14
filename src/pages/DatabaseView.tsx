@@ -20,7 +20,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000];
-const TABLES_TAB_ID = "__tables_home";
 
 function TableLoadingSkeleton() {
   return (
@@ -77,17 +76,14 @@ export default function DatabaseView() {
   useEffect(() => {
     if (!connectionId) return;
     const saved = Persistence.getWorkspaceTabs(connectionId);
-    let list: WorkspaceTab[] = saved && saved.length > 0 ? saved : [];
-    if (!list.some(t => t.kind === "tables")) {
-      list = [{ kind: "tables", id: TABLES_TAB_ID, label: "Tables" }, ...list];
-    }
+    const list: WorkspaceTab[] = (saved && saved.length > 0 ? saved : []).filter((t: any) => t.kind !== "tables");
     setTabs(list);
     const active = Persistence.getActiveWorkspaceTabId(connectionId);
     setActiveTabId(active && list.find(t => t.id === active) ? active : list[0]?.id || null);
   }, [connectionId]);
 
   useEffect(() => {
-    if (connectionId) Persistence.setWorkspaceTabs(connectionId, tabs.filter(t => t.kind !== "tables"));
+    if (connectionId) Persistence.setWorkspaceTabs(connectionId, tabs);
   }, [connectionId, tabs]);
 
   useEffect(() => {
@@ -138,16 +134,6 @@ export default function DatabaseView() {
       const existing = prev.find(t => t.kind === "visualizer");
       if (existing) { setActiveTabId(existing.id); return prev; }
       const newTab: WorkspaceTab = { kind: "visualizer", id: generateTabId(), label: "Schema Visualizer" };
-      setActiveTabId(newTab.id);
-      return [...prev, newTab];
-    });
-  }, []);
-
-  const openTablesTab = useCallback(() => {
-    setTabs(prev => {
-      const existing = prev.find(t => t.kind === "tables");
-      if (existing) { setActiveTabId(existing.id); return prev; }
-      const newTab: WorkspaceTab = { kind: "tables", id: TABLES_TAB_ID, label: "Tables" };
       setActiveTabId(newTab.id);
       return [...prev, newTab];
     });
@@ -252,8 +238,8 @@ export default function DatabaseView() {
   const activeView = activeTab?.kind === "query" ? "query" : activeTab?.kind === "visualizer" ? "visualizer" : "tables";
 
   const renderContent = () => {
-    if (!activeTab || activeTab.kind === "tables") {
-      const schemaName = activeTab?.kind === "tables" ? "public" : (searchParams.get("newTable") || "public");
+    if (!activeTab) {
+      const schemaName = searchParams.get("newTable") || "public";
       return (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-4">
@@ -361,7 +347,7 @@ export default function DatabaseView() {
   return (
     <div className="flex flex-col h-full">
       <DatabaseNavbar connectionId={connectionId || ""} activeView={activeView}
-        onOpenTables={openTablesTab} onOpenQuery={() => openQueryTab()} onOpenVisualizer={openVisualizerTab} />
+        onOpenQuery={() => openQueryTab()} onOpenVisualizer={openVisualizerTab} />
       <DbTabs tabs={tabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} onTabRename={renameTab} />
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden">

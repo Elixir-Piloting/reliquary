@@ -56,12 +56,10 @@ export function DbTabs({ tabs, activeTabId, onTabSelect, onTabClose, onTabRename
               <span className={cn("whitespace-nowrap", tabColor(tab))}>{tab.label}</span>
             )}
           </button>
-          {tab.kind !== "tables" && (
-            <span className="h-4 w-4 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive cursor-pointer flex items-center justify-center rounded transition-colors"
-              onClick={e => { e.stopPropagation(); onTabClose(tab.id); }} title="Close tab">
-              <X className="h-3 w-3" />
-            </span>
-          )}
+          <span className="h-4 w-4 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive cursor-pointer flex items-center justify-center rounded transition-colors"
+            onClick={e => { e.stopPropagation(); onTabClose(tab.id); }} title="Close tab">
+            <X className="h-3 w-3" />
+          </span>
         </div>
       ))}
     </div>

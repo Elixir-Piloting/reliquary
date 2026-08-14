@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Code2, Table, Network, PanelLeft, PanelLeftClose, ChevronLeft, ChevronRight } from "lucide-react";
+import { Code2, Network, PanelLeft, PanelLeftClose, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -16,7 +16,6 @@ import { onBranchSwitched } from "@/lib/branch-events";
 interface DatabaseNavbarProps {
   connectionId: string;
   activeView?: "tables" | "query" | "visualizer";
-  onOpenTables?: () => void;
   onOpenQuery?: () => void;
   onOpenVisualizer?: () => void;
 }
@@ -37,7 +36,7 @@ function ProviderBadge({ provider }: { provider?: string }) {
   );
 }
 
-export function DatabaseNavbar({ connectionId, activeView, onOpenTables, onOpenQuery, onOpenVisualizer }: DatabaseNavbarProps) {
+export function DatabaseNavbar({ connectionId, activeView, onOpenQuery, onOpenVisualizer }: DatabaseNavbarProps) {
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebar();
   const rightSidebar = useRightSidebar();
   const { data: connections = [] } = useConnections();
@@ -61,7 +60,6 @@ export function DatabaseNavbar({ connectionId, activeView, onOpenTables, onOpenQ
 
   const navItems = [
     { id: "query", label: "Query", icon: Code2, onClick: onOpenQuery },
-    { id: "tables", label: "Tables", icon: Table, onClick: onOpenTables },
     { id: "visualizer", label: "Schema Visualizer", icon: Network, onClick: onOpenVisualizer },
   ];
 
