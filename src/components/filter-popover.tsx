@@ -127,7 +127,7 @@ export function FilterPopover({ columns, filters, onApply }: FilterPopoverProps)
               <Trash2 className="h-3 w-3" />Clear
             </button>
           ) : <span />}
-          <Button size="sm" className="h-7 px-3 text-xs" onClick={apply} disabled={!rows.some(r => r.active)}>
+          <Button size="sm" className="h-7 px-3 text-xs" onClick={apply}>
             <Check className="h-3 w-3 mr-1" />Apply
           </Button>
         </div>
