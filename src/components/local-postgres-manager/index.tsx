@@ -51,20 +51,13 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
       }
       setLoadingDb(null);
     } else {
-      try {
-        setLoadingDb(key);
-        const dbs = await loadDatabases.mutateAsync({ host: server.host, port: server.port });
-        setDatabases(prev => ({ ...prev, [key]: dbs }));
-      } catch {
-        setLoadingDb(null);
-        setTempUser("postgres");
-        setTempPassword("");
-        setPasswordForServer(server);
-        setSavePassword(false);
-        setShowPasswordDialog(true);
-        return;
-      }
-      setLoadingDb(null);
+      // No saved credentials: ask for the password first instead of attempting
+      // an anonymous connect that hangs on the backend timeout.
+      setTempUser("postgres");
+      setTempPassword("");
+      setPasswordForServer(server);
+      setSavePassword(false);
+      setShowPasswordDialog(true);
     }
   };
 

@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Server } from "lucide-react";
+import { AppLogo } from "@/components/app-logo";
+import { ArrowLeft, Server } from "lucide-react";
 
 export default function AddConnectionPage() {
   const navigate = useNavigate();
@@ -18,10 +19,16 @@ export default function AddConnectionPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      <header className="h-14 border-b border-border flex items-center px-6 shrink-0 bg-muted/20">
-        <button onClick={() => navigate("/")} className="text-sm text-muted-foreground hover:text-foreground">← Back</button>
-      </header>
+    <div className="h-full flex flex-col bg-background overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-3 shrink-0 border-b border-border">
+        <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="gap-2 text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" />Back
+        </Button>
+        <div className="flex items-center gap-2">
+          <AppLogo className="h-5 w-5" />
+          <span className="text-sm font-medium">Add Connection</span>
+        </div>
+      </div>
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-xl mx-auto p-6 space-y-8 pt-8">
           <div className="space-y-2">

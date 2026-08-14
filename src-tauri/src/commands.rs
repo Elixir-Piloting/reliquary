@@ -408,7 +408,7 @@ pub async fn list_local_databases(host: String, port: u16, user: Option<String>,
         .map_err(|e| format!("connect: {}", e))?;
     tokio::spawn(async move { drop(connection); });
     let rows = client.query(
-        "SELECT datname, pg_catalog.pg_get_userbyid(datdba) AS owner, pg_encoding_to_char(encoding) AS encoding, pg_size_pretty(pg_database_size(datname)) AS size FROM pg_database WHERE datistemplate = false ORDER BY datname",
+        "SELECT datname, pg_catalog.pg_get_userbyid(datdba) AS owner, pg_encoding_to_char(encoding) AS encoding, NULL::text AS size FROM pg_database WHERE datistemplate = false ORDER BY datname",
         &[],
     ).await.map_err(|e| format!("query: {}", e))?;
     let dbs: Vec<LocalPgDatabase> = rows.iter().map(|r| LocalPgDatabase {

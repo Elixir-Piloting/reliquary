@@ -2,6 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import { LocalPostgresManager } from "@/components/local-postgres-manager";
 import { Button } from "@/components/ui/button";
+import { AppLogo } from "@/components/app-logo";
 import { ArrowLeft } from "lucide-react";
 import { useAddConnection, useConnect } from "@/lib/query/hooks/use-connections";
 import type { LocalPostgresConnectionDraft } from "@/components/local-postgres-manager/types";
@@ -24,12 +25,16 @@ export default function LocalPostgresSelectionPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      <header className="h-14 border-b border-border flex items-center px-6 shrink-0 bg-muted/20">
-        <Button variant="ghost" size="sm" onClick={() => navigate("/add-connection")}>
-          <ArrowLeft className="h-4 w-4 mr-1" />Back
+    <div className="h-full flex flex-col bg-background overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-3 shrink-0 border-b border-border">
+        <Button variant="ghost" size="sm" onClick={() => navigate("/add-connection")} className="gap-2 text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" />Back
         </Button>
-      </header>
+        <div className="flex items-center gap-2">
+          <AppLogo className="h-5 w-5" />
+          <span className="text-sm font-medium">Local PostgreSQL</span>
+        </div>
+      </div>
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-xl mx-auto p-6 pt-8 space-y-6">
           <LocalPostgresManager onServerSelect={handleServerSelect} />
