@@ -1,6 +1,6 @@
 use relic_lib::{format_array_literal, json_to_tosql, numeric_bytes_to_string};
 use serde_json::json;
-use tokio_postgres::types::{FromSql, IsNull, Type};
+use tokio_postgres::types::{IsNull, Type};
 use tokio_postgres::types::private::BytesMut;
 
 // ---------------------------------------------------------------------------
@@ -18,6 +18,12 @@ fn encode(v: &serde_json::Value, ty: &Type) -> (BytesMut, IsNull) {
     (buf, is_null)
 }
 
+fn encode_text(v: &serde_json::Value, ty: &Type) -> String {
+    let (buf, is_null) = encode(v, ty);
+    assert!(matches!(is_null, IsNull::No), "expected non-null for {v}");
+    String::from_utf8(buf.to_vec()).expect("utf-8")
+}
+
 #[test]
 fn json_null_maps_to_sql_null() {
     let (_, is_null) = encode(&serde_json::Value::Null, &Type::TEXT);
@@ -25,73 +31,54 @@ fn json_null_maps_to_sql_null() {
 }
 
 #[test]
-fn json_bool_round_trips_as_sql_bool() {
-    for value in [true, false] {
-        let (buf, is_null) = encode(&json!(value), &Type::BOOL);
-        assert!(matches!(is_null, IsNull::No));
-        let decoded = bool::from_sql(&Type::BOOL, &buf).unwrap();
-        assert_eq!(decoded, value);
-    }
+fn json_bool_maps_to_text_true_false() {
+    assert_eq!(encode_text(&json!(true), &Type::BOOL), "true");
+    assert_eq!(encode_text(&json!(false), &Type::BOOL), "false");
+    // Text format lets the server cast to ANY target type (bool, int, ...).
+    assert_eq!(encode_text(&json!(true), &Type::INT4), "true");
 }
 
 #[test]
-fn json_int_round_trips_as_sql_int8() {
-    let (buf, is_null) = encode(&json!(42), &Type::INT8);
-    assert!(matches!(is_null, IsNull::No));
-    let decoded = i64::from_sql(&Type::INT8, &buf).unwrap();
-    assert_eq!(decoded, 42);
+fn json_int_maps_to_text() {
+    assert_eq!(encode_text(&json!(42), &Type::INT8), "42");
+    assert_eq!(encode_text(&json!(-7), &Type::INT8), "-7");
+    // Casting to numeric via text is exactly the grid's money/amount case.
+    assert_eq!(encode_text(&json!(42), &Type::NUMERIC), "42");
 }
 
 #[test]
-fn json_negative_int_round_trips_as_sql_int8() {
-    let (buf, _) = encode(&json!(-7), &Type::INT8);
-    let decoded = i64::from_sql(&Type::INT8, &buf).unwrap();
-    assert_eq!(decoded, -7);
+fn json_float_maps_to_text() {
+    assert_eq!(encode_text(&json!(1.5), &Type::FLOAT8), "1.5");
+    // numeric columns (decimal amounts) bind via text.
+    assert_eq!(encode_text(&json!(12.34), &Type::NUMERIC), "12.34");
 }
 
 #[test]
-fn json_float_round_trips_as_sql_float8() {
-    let (buf, is_null) = encode(&json!(1.5), &Type::FLOAT8);
-    assert!(matches!(is_null, IsNull::No));
-    let decoded = f64::from_sql(&Type::FLOAT8, &buf).unwrap();
-    assert_eq!(decoded, 1.5);
-}
-
-#[test]
-fn json_string_round_trips_as_sql_text() {
-    let (buf, is_null) = encode(&json!("hello"), &Type::TEXT);
-    assert!(matches!(is_null, IsNull::No));
-    let decoded = String::from_sql(&Type::TEXT, &buf).unwrap();
-    assert_eq!(decoded, "hello");
+fn json_string_maps_to_text() {
+    assert_eq!(encode_text(&json!("hello"), &Type::TEXT), "hello");
+    // uuid/jsonb/date/enum columns all accept text and cast server-side.
+    assert_eq!(encode_text(&json!("card"), &Type::JSONB), "card");
 }
 
 #[test]
 fn json_array_maps_to_json_text_string() {
     let v = json!([1, 2, 3]);
-    let (buf, is_null) = encode(&v, &Type::TEXT);
-    assert!(matches!(is_null, IsNull::No));
-    let decoded = String::from_sql(&Type::TEXT, &buf).unwrap();
-    assert_eq!(decoded, v.to_string());
+    assert_eq!(encode_text(&v, &Type::TEXT), v.to_string());
+    assert_eq!(encode_text(&v, &Type::JSONB), v.to_string());
 }
 
 #[test]
 fn json_object_maps_to_json_text_string() {
     let v = json!({"a": 1, "b": [true, null]});
-    let (buf, is_null) = encode(&v, &Type::TEXT);
-    assert!(matches!(is_null, IsNull::No));
-    let decoded = String::from_sql(&Type::TEXT, &buf).unwrap();
-    assert_eq!(decoded, v.to_string());
+    assert_eq!(encode_text(&v, &Type::TEXT), v.to_string());
+    assert_eq!(encode_text(&v, &Type::JSONB), v.to_string());
 }
 
 #[test]
-fn json_u64_only_number_maps_to_float8() {
-    // u64::MAX is not i64 but serde_json always provides as_f64, so it binds
-    // as f64 (i64 -> f64 -> string priority per the mapping).
+fn json_u64_only_number_maps_to_text() {
+    // serde_json numbers that exceed i64 still serialize to their exact text.
     let v = json!(u64::MAX);
-    let (buf, is_null) = encode(&v, &Type::FLOAT8);
-    assert!(matches!(is_null, IsNull::No));
-    let decoded = f64::from_sql(&Type::FLOAT8, &buf).unwrap();
-    assert_eq!(decoded, u64::MAX as f64);
+    assert_eq!(encode_text(&v, &Type::NUMERIC), v.to_string());
 }
 
 // ---------------------------------------------------------------------------

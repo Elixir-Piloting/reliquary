@@ -975,27 +975,28 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 pub fn json_to_tosql(v: &serde_json::Value) -> Box<dyn ToSql + Send + Sync> {
     match v {
         serde_json::Value::Null => Box::new(Option::<String>::None),
-        serde_json::Value::Bool(b) => Box::new(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Box::new(i)
-            } else if let Some(f) = n.as_f64() {
-                Box::new(f)
-            } else {
-                Box::new(n.to_string())
-            }
-        }
+        serde_json::Value::Bool(b) => Box::new(SqlText(if *b { "true".to_string() } else { "false".to_string() })),
+        serde_json::Value::Number(n) => Box::new(SqlText(n.to_string())),
         // A `SqlText` (not a plain `String`) so enum columns can be bound too:
         // tokio-postgres's `String` rejects `Kind::Enum`, but an enum's binary
         // wire format is its label as UTF-8, which is exactly what this writes.
         serde_json::Value::String(s) => Box::new(SqlText(s.clone())),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Box::new(v.to_string()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Box::new(SqlText(v.to_string())),
     }
 }
 
-/// A string value that can be bound to either a text column or a user-defined
-/// enum column. Enums travel in binary as their label's UTF-8 bytes, so the
-/// bytes written are identical to a plain text value — only `accepts` differs.
+/// A text value sent to the server in **text format**, letting PostgreSQL
+/// perform the cast to the target column's type itself.
+///
+/// This is the universal binder: a value of any type can be written as its
+/// text representation and Postgres will coerce it — `"123.45"` to `numeric`,
+/// `"550e8400-…"` to `uuid`, `'{"a":1}'` to `jsonb`, `"card"` to an enum,
+/// `"2024-01-01"` to `date`, etc. Binding a plain `String`/`i64`/`f64` fails
+/// for such columns because those Rust types' `accepts()` reject the
+/// server-inferred parameter type; text format sidesteps that entirely.
+///
+/// `encode_format` returning `Format::Text` is what makes this work —
+/// tokio-postgres reads it per-parameter and skips binary encoding.
 #[derive(Debug, Clone)]
 struct SqlText(String);
 
@@ -1008,9 +1009,11 @@ impl ToSql for SqlText {
         out.extend_from_slice(self.0.as_bytes());
         Ok(IsNull::No)
     }
-    fn accepts(ty: &Type) -> bool {
-        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
-            || <&str as ToSql>::accepts(ty)
+    fn accepts(_ty: &Type) -> bool {
+        true
+    }
+    fn encode_format(&self, _ty: &Type) -> tokio_postgres::types::Format {
+        tokio_postgres::types::Format::Text
     }
     tokio_postgres::types::to_sql_checked!();
 }
@@ -2027,14 +2030,14 @@ mod tests {
     }
 
     #[test]
-    fn sql_text_accepts_enum_kind_and_text() {
+    fn sql_text_accepts_any_type_and_uses_text_format() {
         use tokio_postgres::types::ToSql;
         let enum_ty = Type::new("payment_method".into(), 12345, Kind::Enum(vec!["card".into(), "bank".into()]), "public".into());
-        let text_ty = Type::TEXT;
-        let int_ty = Type::INT4;
-        assert!(<SqlText as ToSql>::accepts(&enum_ty), "enum kinds must be bindable");
-        assert!(<SqlText as ToSql>::accepts(&text_ty), "text still bindable");
-        assert!(!<SqlText as ToSql>::accepts(&int_ty), "non-text non-enum rejected");
+        for ty in [Type::TEXT, Type::INT4, Type::NUMERIC, Type::JSONB, Type::UUID, Type::BOOL, enum_ty.clone()] {
+            assert!(<SqlText as ToSql>::accepts(&ty), "SqlText must accept {ty}");
+        }
+        // Text format is what lets the server cast the value to any column type.
+        assert!(matches!(SqlText("x".into()).encode_format(&Type::NUMERIC), tokio_postgres::types::Format::Text));
     }
 
     #[test]
@@ -2045,7 +2048,7 @@ mod tests {
         let mut buf = BytesMut::new();
         let v = SqlText("bank".into());
         assert!(matches!(ToSql::to_sql(&v, &enum_ty, &mut buf), Ok(IsNull::No)));
-        assert_eq!(&buf[..], b"bank", "enum binary format is the label as UTF-8");
+        assert_eq!(&buf[..], b"bank", "text bytes are the label");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { PAGE_SIZE_OPTIONS } from "./types";
 import { ReviewChangesSheet } from "./review-changes-sheet";
 import { RowEditorPanel } from "./row-editor-panel";
 import { ConfirmDialog } from "./confirm-dialog";
-import { getInputType, toSqlParamValue, displayValueToString } from "./field-types";
+import { getInputType, formatValueForInput, toSqlParamValue, displayValueToString } from "./field-types";
 import { toCsv, toJson, downloadText } from "@/lib/export";
 import API, { type RowMutationStatement } from "@/lib/ipc-client";
 
@@ -40,6 +40,73 @@ function getSortOptions(dataType: string): { label: string; direction: 'asc' | '
     { label: 'A → Z', direction: 'asc' },
     { label: 'Z → A', direction: 'desc' },
   ];
+}
+
+function InlineSelect({ value, options, labels, onChange, onSave, onCancel }: {
+  value: string; options: string[]; labels?: string[];
+  onChange: (v: string) => void; onSave: (v: string) => void; onCancel: () => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const ddRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0, maxHeight: 240 });
+
+  const measure = useCallback(() => {
+    const td = btnRef.current?.closest('td') as HTMLTableCellElement | null;
+    if (!td) return;
+    const r = td.getBoundingClientRect();
+    const estHeight = Math.min(options.length * 30 + 4, 320);
+    const spaceBelow = window.innerHeight - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    const showBelow = spaceBelow >= estHeight || spaceBelow >= spaceAbove;
+    setPos({
+      top: showBelow ? r.bottom + 1 : r.top - 1 - Math.min(estHeight, spaceAbove),
+      left: r.left,
+      width: r.width,
+      maxHeight: showBelow ? Math.min(320, spaceBelow) : Math.min(320, spaceAbove),
+    });
+  }, [options.length]);
+
+  useEffect(() => { if (open) measure(); }, [open, measure]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || ddRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button ref={btnRef} autoFocus onClick={() => setOpen(o => !o)}
+        onKeyDown={e => { if (e.key === 'Enter') onSave(value); if (e.key === 'Escape') onCancel(); }}
+        className="w-full text-left bg-transparent border-0 p-0 m-0 text-foreground cursor-pointer text-sm">
+        {value === '' ? <span className="text-muted-foreground italic">NULL</span> : value}
+      </button>
+      {open && createPortal(
+        <div ref={ddRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 99999, maxHeight: pos.maxHeight, overflowY: 'auto' }}
+          className="bg-popover border border-border shadow-md text-sm rounded-none">
+          {options.map((opt, i) => (
+            <div key={opt} onMouseDown={(e) => { e.preventDefault(); onChange(opt); setOpen(false); onSave(opt); }}
+              className={cn("px-2 py-1.5 cursor-pointer select-none transition-colors",
+                opt === value ? "bg-primary/15 text-foreground font-medium" : "text-foreground hover:bg-accent hover:text-accent-foreground")}>
+              {labels ? labels[i] : (opt === '' ? <span className="text-muted-foreground italic">NULL</span> : opt)}
+            </div>
+          ))}
+        </div>, document.body)}
+    </>
+  );
 }
 
 function ResultsLoadingSkeleton() {
@@ -70,6 +137,11 @@ export function ResultsViewer({
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
   const [sortDropdownCol, setSortDropdownCol] = useState<string | null>(null);
+  const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; col: string } | null>(null);
+  const [enumCache, setEnumCache] = useState<Record<string, string[] | null>>({});
+  const [enumLoading, setEnumLoading] = useState<Record<string, boolean>>({});
 
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
   const [showReviewSheet, setShowReviewSheet] = useState(false);
@@ -141,6 +213,43 @@ export function ResultsViewer({
     if (!canEdit) return;
     setEditor({ mode: 'edit', row });
   };
+
+  const handleCellDoubleClick = (rowIdxInSorted: number, col: string, dataType: string, value: unknown) => {
+    if (!canEdit) return;
+    const inputType = getInputType(dataType);
+    if (inputType === 'maybe-enum' && enumCache[dataType] === undefined && !enumLoading[dataType]) {
+      setEnumLoading(prev => ({ ...prev, [dataType]: true }));
+      setEditingCell({ rowIdx: rowIdxInSorted, col });
+      setEditValue(formatValueForInput(value, 'text'));
+      invoke<string[]>("get_enum_values", { connectionId, typeName: dataType })
+        .then(vals => { setEnumCache(prev => ({ ...prev, [dataType]: vals || [] })); setEnumLoading(prev => ({ ...prev, [dataType]: false })); })
+        .catch(() => { setEnumCache(prev => ({ ...prev, [dataType]: [] })); setEnumLoading(prev => ({ ...prev, [dataType]: false })); });
+      return;
+    }
+    setEditingCell({ rowIdx: rowIdxInSorted, col });
+    setEditValue(formatValueForInput(value, inputType));
+  };
+
+  const handleSaveEdit = (row: Record<string, unknown>, overrideValue?: string) => {
+    if (!editingCell || !canEdit || !schema || !table) return;
+    const colMeta = displayResult?.columns?.find(c => c.name === editingCell.col);
+    const inputType = getInputType(colMeta?.dataType || '');
+    const newVal = overrideValue !== undefined ? overrideValue : editValue;
+    if (newVal === formatValueForInput(row[editingCell.col], inputType)) { setEditingCell(null); return; }
+    const change: PendingChange = {
+      id: `${schema}.${table}.${editingCell.col}-${Date.now()}`,
+      schema, table,
+      columnName: editingCell.col,
+      dataType: colMeta?.dataType || '',
+      pkValues: getPkValues(row),
+      originalValue: row[editingCell.col],
+      newValue: newVal,
+    };
+    setPendingChanges(prev => [...prev, change]);
+    setEditingCell(null);
+  };
+
+  const handleCancelEdit = () => setEditingCell(null);
 
   const handleOpenInsert = () => setEditor({ mode: 'insert', row: null });
 
@@ -377,11 +486,40 @@ export function ResultsViewer({
                         const change = getChangeForCell(row, field.name);
                         const displayValue = change ? change.newValue : value;
                         const showNull = displayValue === null;
+                        const isEditing = editingCell?.rowIdx === actualIndex && editingCell?.col === field.name;
+                        const isSelectedCell = selectedCell?.rowIdx === actualIndex && selectedCell?.col === field.name;
+                        const inputType = getInputType(field.dataType);
+                        const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
                         return (<TableCell key={field.name}
-                          className={cn("min-w-[140px] max-w-[300px] truncate relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", pendingDelete && "line-through")}
+                          className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
                           style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
-                          title={showNull ? "NULL" : displayValueToString(displayValue)}>
-                          <span>{showNull ? "NULL" : displayValueToString(displayValue)}</span>
+                          onDoubleClick={(e) => { e.stopPropagation(); if (!pendingDelete) handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
+                          onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); }} title={showNull ? "NULL" : displayValueToString(displayValue)}>
+                          {isEditing ? (inputType === 'select-boolean' ? (
+                            <InlineSelect
+                              value={editValue} options={['true', 'false', '']} labels={['true', 'false', 'NULL']}
+                              onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
+                            />
+                          ) : enumVals && enumVals.length > 0 ? (
+                            <InlineSelect
+                              value={editValue} options={[...enumVals, '']}
+                              onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
+                            />
+                          ) : inputType === 'maybe-enum' && enumLoading[field.dataType] ? (
+                            <span className="text-muted-foreground italic">Loading...</span>
+                          ) : (
+                            <input
+                              type={inputType === 'maybe-enum' ? 'text' : inputType}
+                              value={editValue}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => handleSaveEdit(row)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit(row); if (e.key === 'Escape') handleCancelEdit(); }}
+                              autoFocus
+                              className="w-full bg-transparent border-0 outline-none focus:outline-none focus:ring-0 p-0 m-0 text-foreground text-xs"
+                            />
+                          )) : (
+                            <span>{showNull ? "NULL" : displayValueToString(displayValue)}</span>
+                          )}
                         </TableCell>);
                       })}
                       {canEdit && onAddColumn && <TableCell className="p-0" />}
