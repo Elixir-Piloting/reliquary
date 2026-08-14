@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { TableFilter } from "@/lib/db/types";
 
 export interface Connection {
   id: string;
@@ -253,8 +254,8 @@ const API = {
   },
 
   // Table data
-  async getTableData(connectionId: string, schema: string, table: string, page: number, pageSize: number, sortColumn?: string, sortDirection?: string): Promise<TableDataResult> {
-    return invoke("get_table_data", { connectionId, schema, table, page, pageSize, sortColumn, sortDirection });
+  async getTableData(connectionId: string, schema: string, table: string, page: number, pageSize: number, sortColumn?: string, sortDirection?: string, filters?: TableFilter[]): Promise<TableDataResult> {
+    return invoke("get_table_data", { connectionId, schema, table, page, pageSize, sortColumn, sortDirection, filters });
   },
 
   // Queries

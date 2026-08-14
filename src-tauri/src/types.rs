@@ -149,6 +149,17 @@ pub struct TableDataResult {
     pub total_count: i64,
 }
 
+/// A single filter row applied to a table query. `operator` is one of:
+/// eq, neq, contains, not_contains, like, not_like, starts_with, ends_with,
+/// is_null, is_not_null.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TableFilter {
+    pub column: String,
+    pub operator: String,
+    pub value: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnMeta {

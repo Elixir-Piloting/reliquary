@@ -271,11 +271,12 @@ pub async fn get_table_data(
     page_size: i64,
     sort_column: Option<String>,
     sort_direction: Option<String>,
+    filters: Option<Vec<TableFilter>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<TableDataResult, String> {
     let handle = get_handle(&state, &connection_id).await?;
     let client = get_client(&handle).await?;
-    pg::pg_get_table_data(&client, &schema, &table, page, page_size, sort_column.as_deref(), sort_direction.as_deref()).await
+    pg::pg_get_table_data(&client, &schema, &table, page, page_size, sort_column.as_deref(), sort_direction.as_deref(), filters.as_deref().unwrap_or(&[])).await
 }
 
 #[tauri::command]

@@ -133,7 +133,8 @@ function QuerySuccessBanner({ result }: { result: { isSelect?: boolean; rowCount
 }
 
 export function ResultsViewer({
-  result, error, loading, schema, table, onRefresh, enableCRUD, readOnly, connectionId, pkColumns, columnsMeta, onAddColumn
+  result, error, loading, schema, table, onRefresh, enableCRUD, readOnly, connectionId, pkColumns, columnsMeta, onAddColumn,
+  sort: controlledSort, onSortChange, hiddenColumns,
 }: ResultsViewerProps) {
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
@@ -218,16 +219,20 @@ export function ResultsViewer({
   }, []);
 
   const sortedRows = useMemo(() => {
-    if (!displayResult || !sortColumn) return displayResult?.rows || [];
+    // When server-side sort is active, rows arrive pre-sorted.
+    if (onSortChange && controlledSort) return displayResult?.rows || [];
+    const effectiveCol = onSortChange ? controlledSort?.column || null : sortColumn;
+    if (!displayResult || !effectiveCol) return displayResult?.rows || [];
+    const effectiveDir = onSortChange ? controlledSort?.direction || "asc" : sortDirection;
     return [...displayResult.rows].sort((a, b) => {
-      const aVal = a[sortColumn]; const bVal = b[sortColumn];
+      const aVal = a[effectiveCol]; const bVal = b[effectiveCol];
       if (aVal == null && bVal == null) return 0;
     if (aVal == null) return 1;
     if (bVal == null) return -1;
     const comparison = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
-      return sortDirection === "asc" ? comparison : -comparison;
+      return effectiveDir === "asc" ? comparison : -comparison;
     });
-  }, [displayResult, sortColumn, sortDirection]);
+  }, [displayResult, sortColumn, sortDirection, controlledSort, onSortChange]);
 
   const insertRows = useMemo(
     () => pendingChanges
@@ -263,9 +268,14 @@ export function ResultsViewer({
   }, [pendingChanges]);
 
   const handleSort = (column: string) => {
+    if (onSortChange) { onSortChange(column); return; }
     if (sortColumn === column) setSortDirection(d => d === "asc" ? "desc" : "asc");
     else { setSortColumn(column); setSortDirection("asc"); }
   };
+
+  const effectiveSortColumn = onSortChange ? (controlledSort?.column ?? null) : sortColumn;
+  const effectiveSortDirection = onSortChange ? (controlledSort?.direction ?? "asc") : sortDirection;
+  const visibleColumns = (displayResult?.columns || []).filter(c => !hiddenColumns || !hiddenColumns.has(c.name));
 
   const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
@@ -533,14 +543,14 @@ export function ResultsViewer({
                 <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
                 <TableRow className="hover:bg-muted/50">
                   <TableHead className="sticky left-0 z-30 bg-table-header pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
-                  {(displayResult!.columns || []).map((field, colIdx) => (
+                  {(visibleColumns).map((field, colIdx) => (
                     <TableHead key={field.name} className={cn("group select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none", field.name === 'id' && "sticky z-30 bg-table-header")} style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}>
                       <ContextMenu>
                         <ContextMenuTrigger asChild>
                           <div className="flex items-center justify-between w-full cursor-pointer" onClick={() => handleSort(field.name)}>
                             <span className="text-xs font-medium">{field.name}</span>
                             <div className="flex items-center gap-0.5">
-                              {sortColumn === field.name && <span className="text-xs font-medium tabular-nums">{sortDirection === "asc" ? "↑" : "↓"}</span>}
+                              {effectiveSortColumn === field.name && <span className="text-xs font-medium tabular-nums">{effectiveSortDirection === "asc" ? "↑" : "↓"}</span>}
                               <Popover open={sortDropdownCol === field.name} onOpenChange={(open) => setSortDropdownCol(open ? field.name : null)}>
                                 <PopoverTrigger asChild>
                                   <button onClick={(e) => e.stopPropagation()} className="opacity-0 group-hover:opacity-100 h-4 w-4 flex items-center justify-center rounded hover:bg-foreground/10 transition-opacity">
@@ -550,12 +560,12 @@ export function ResultsViewer({
                                 <PopoverContent className="w-40 p-1" align="start" side="bottom">
                                   <div className="flex flex-col gap-0.5">
                                     {getSortOptions(field.dataType).map(opt => (
-                                      <button key={opt.direction} onClick={() => { setSortColumn(field.name); setSortDirection(opt.direction); setSortDropdownCol(null); }}
-                                        className={cn("flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors cursor-pointer", sortColumn === field.name && sortDirection === opt.direction && "bg-accent font-medium")}>
+                                      <button key={opt.direction} onClick={() => { if (onSortChange) { onSortChange(field.name); } else { setSortColumn(field.name); setSortDirection(opt.direction); } setSortDropdownCol(null); }}
+                                        className={cn("flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors cursor-pointer", effectiveSortColumn === field.name && effectiveSortDirection === opt.direction && "bg-accent font-medium")}>
                                         {opt.label}
                                       </button>
                                     ))}
-                                    {sortColumn === field.name && <><div className="border-t border-border my-0.5" /><button onClick={() => { setSortColumn(null); setSortDropdownCol(null); }} className="flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors text-muted-foreground cursor-pointer">Clear sort</button></>}
+                                    {effectiveSortColumn === field.name && <><div className="border-t border-border my-0.5" /><button onClick={() => { if (onSortChange) { onSortChange(field.name); } else { setSortColumn(null); } setSortDropdownCol(null); }} className="flex items-center px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground text-left transition-colors text-muted-foreground cursor-pointer">Clear sort</button></>}
                                   </div>
                                 </PopoverContent>
                               </Popover>
@@ -564,12 +574,12 @@ export function ResultsViewer({
                         </ContextMenuTrigger>
                         <ContextMenuContent className="w-40">
                           {getSortOptions(field.dataType).map(opt => (
-                            <ContextMenuItem key={opt.direction} onSelect={() => { setSortColumn(field.name); setSortDirection(opt.direction); }}>
+                            <ContextMenuItem key={opt.direction} onSelect={() => { if (onSortChange) { onSortChange(field.name); } else { setSortColumn(field.name); setSortDirection(opt.direction); } }}>
                               <span className="flex-1">{opt.label}</span>
-                              {sortColumn === field.name && sortDirection === opt.direction && <Check className="h-3 w-3 ml-2 shrink-0" />}
+                              {effectiveSortColumn === field.name && effectiveSortDirection === opt.direction && <Check className="h-3 w-3 ml-2 shrink-0" />}
                             </ContextMenuItem>
                           ))}
-                          {sortColumn === field.name && <><div className="border-t border-border mx-1 my-0.5" /><ContextMenuItem onSelect={() => setSortColumn(null)}><X className="h-3 w-3 mr-2" />Clear sort</ContextMenuItem></>}
+                          {effectiveSortColumn === field.name && <><div className="border-t border-border mx-1 my-0.5" /><ContextMenuItem onSelect={() => { if (onSortChange) { onSortChange(field.name); } else { setSortColumn(null); } }}><X className="h-3 w-3 mr-2" />Clear sort</ContextMenuItem></>}
                         </ContextMenuContent>
                       </ContextMenu>
                     </TableHead>
@@ -592,7 +602,7 @@ export function ResultsViewer({
                   return (
                     <TableRow key={`row-${actualIndex}`} className={cn("hover:bg-transparent", pendingDelete && "opacity-40", canEdit && "cursor-pointer")} data-state={isSelected ? "selected" : undefined} onClick={() => handleRowClick(row)}>
                       <TableCell onClick={(e) => e.stopPropagation()} className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
-                      {(displayResult!.columns || []).map((field, colIdx) => {
+                      {visibleColumns.map((field, colIdx) => {
                         const value = row[field.name]; const isNull = value === null;
                         const change = getChangeForCell(row, field.name);
                         const displayValue = change ? change.newValue : value;
@@ -642,7 +652,7 @@ export function ResultsViewer({
                     <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}>
                       <span className="inline-block h-4 w-4 rounded-sm border border-dashed border-emerald-500/50" aria-hidden />
                     </TableCell>
-                    {(displayResult!.columns || []).map(field => {
+                    {visibleColumns.map(field => {
                       const value = values[field.name];
                       const showNull = value === null || value === undefined;
                       return (

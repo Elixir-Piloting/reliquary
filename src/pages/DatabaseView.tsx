@@ -8,11 +8,13 @@ import { ResultsViewer } from "@/components/results-viewer";
 import { QueryPane } from "@/components/query-pane";
 import SchemaVisualizer from "@/components/schema-visualizer";
 import { BorderBeam } from "@/components/ui/border-beam";
+import { FilterPopover } from "@/components/filter-popover";
+import { ColumnsPopover } from "@/components/columns-popover";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Persistence } from "@/lib/persistence";
 import API from "@/lib/ipc-client";
-import type { QueryResult, ColumnInfo } from "@/lib/db/types";
+import type { QueryResult, ColumnInfo, ColumnMeta, TableFilter } from "@/lib/db/types";
 import { generateTabId, type WorkspaceTab } from "@/lib/workspace-tabs";
 import { clearQueryTransient } from "@/components/query-pane";
 import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check } from "lucide-react";
@@ -41,6 +43,9 @@ export default function DatabaseView() {
   const [readOnly, setReadOnly] = useState(false);
   const [autoRefreshMs, setAutoRefreshMs] = useState<number | null>(null);
   const [autoRefreshOpen, setAutoRefreshOpen] = useState(false);
+  const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
+  const [filters, setFilters] = useState<TableFilter[]>([]);
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
 
   const activeTab = tabs.find(t => t.id === activeTabId);
 
@@ -200,7 +205,7 @@ export default function DatabaseView() {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const data = await API.getTableData(connectionId, activeTab.schema, activeTab.table, page, pageSize);
+      const data = await API.getTableData(connectionId, activeTab.schema, activeTab.table, page, pageSize, sort?.column, sort?.direction, filters);
       setResult({
         columns: data.columns,
         rows: data.rows,
@@ -218,12 +223,34 @@ export default function DatabaseView() {
       }
     }
     if (!silent) setLoading(false);
-  }, [connectionId, activeTab, page, pageSize]);
+  }, [connectionId, activeTab, page, pageSize, sort, filters]);
 
   const fetchDataRef = useRef(fetchData);
   fetchDataRef.current = fetchData;
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const cycleSort = useCallback((column: string) => {
+    setSort(prev => {
+      if (!prev || prev.column !== column) return { column, direction: "asc" };
+      if (prev.direction === "asc") return { column, direction: "desc" };
+      return null;
+    });
+    setPage(1);
+  }, []);
+
+  const applyFilters = useCallback((next: TableFilter[]) => {
+    setFilters(next);
+    setPage(1);
+  }, []);
+
+  const toggleColumn = useCallback((column: string) => {
+    setHiddenColumns(prev => {
+      const next = new Set(prev);
+      if (next.has(column)) next.delete(column); else next.add(column);
+      return next;
+    });
+  }, []);
 
   const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 0;
   const activeView = activeTab?.kind === "query" ? "query" : activeTab?.kind === "visualizer" ? "visualizer" : "tables";
@@ -312,6 +339,18 @@ export default function DatabaseView() {
                 </PopoverContent>
               </Popover>
             </div>
+            {result && (() => {
+              const cols: ColumnMeta[] = (columnsMeta[activeTab?.id || ""] || result.columns || []).map(c => ({
+                name: (c as any).columnName ?? (c as any).name,
+                dataType: c.dataType,
+              }));
+              return (
+                <div className="flex items-center gap-1">
+                  <FilterPopover columns={cols} filters={filters} onApply={applyFilters} />
+                  <ColumnsPopover columns={cols} hidden={hiddenColumns} onToggle={toggleColumn} onSetHidden={s => setHiddenColumns(s)} />
+                </div>
+              );
+            })()}
             {result && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Popover open={pageSizePopoverOpen} onOpenChange={setPageSizePopoverOpen}>
@@ -357,7 +396,8 @@ export default function DatabaseView() {
             connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
             columnsMeta={columnsMeta[activeTab.id]}
             enableCRUD={true} readOnly={readOnly}
-            onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)} />
+            onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)}
+            sort={sort} onSortChange={cycleSort} hiddenColumns={hiddenColumns} />
         </div>
       </div>
     );

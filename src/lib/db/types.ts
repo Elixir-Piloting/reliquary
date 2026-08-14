@@ -7,6 +7,16 @@ export interface ColumnMeta {
   dataType: string;
 }
 
+export type TableFilterOperator =
+  | "eq" | "neq" | "contains" | "not_contains" | "like" | "not_like"
+  | "starts_with" | "ends_with" | "is_null" | "is_not_null";
+
+export interface TableFilter {
+  column: string;
+  operator: TableFilterOperator;
+  value?: string;
+}
+
 export interface QueryResult {
   columns: ColumnMeta[];
   rows: Record<string, unknown>[];

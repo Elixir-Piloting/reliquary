@@ -22,6 +22,11 @@ export interface ResultsViewerProps {
   /** Full column metadata (incl. nullability) used by the row editor panel. */
   columnsMeta?: ColumnInfo[];
   onAddColumn?: () => void;
+  /** Controlled sort (server-side). When set, header clicks call `onSortChange`. */
+  sort?: { column: string; direction: "asc" | "desc" } | null;
+  onSortChange?: (column: string) => void;
+  /** Columns to hide in the grid (server still returns them; they're not rendered). */
+  hiddenColumns?: Set<string>;
 }
 
 export type PendingChangeOp = "update" | "insert" | "delete";

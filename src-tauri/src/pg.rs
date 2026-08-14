@@ -688,20 +688,79 @@ pub async fn pg_get_roles(client: &PgClient) -> Result<Vec<RoleInfo>, String> {
     Ok(out)
 }
 
-pub async fn pg_get_table_data(client: &PgClient, schema: &str, table: &str, page: i64, page_size: i64, sort_col: Option<&str>, sort_dir: Option<&str>) -> Result<TableDataResult, String> {
+fn build_filter_where(filters: &[TableFilter]) -> (String, Vec<Box<dyn ToSql + Send + Sync>>) {
+    if filters.is_empty() {
+        return (String::new(), Vec::new());
+    }
+    let mut clauses = Vec::new();
+    let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
+    for f in filters {
+        let col = format!("\"{}\"", f.column.replace('"', "\"\""));
+        let value = f.value.clone().unwrap_or_default();
+        match f.operator.as_str() {
+            "eq" => {
+                params.push(Box::new(value));
+                clauses.push(format!("{} = ${}", col, params.len()));
+            }
+            "neq" => {
+                params.push(Box::new(value));
+                clauses.push(format!("{} <> ${}", col, params.len()));
+            }
+            "contains" => {
+                params.push(Box::new(format!("%{}%", value)));
+                clauses.push(format!("{} ILIKE ${}", col, params.len()));
+            }
+            "not_contains" => {
+                params.push(Box::new(format!("%{}%", value)));
+                clauses.push(format!("{} NOT ILIKE ${}", col, params.len()));
+            }
+            "like" => {
+                params.push(Box::new(value));
+                clauses.push(format!("{} LIKE ${}", col, params.len()));
+            }
+            "not_like" => {
+                params.push(Box::new(value));
+                clauses.push(format!("{} NOT LIKE ${}", col, params.len()));
+            }
+            "starts_with" => {
+                params.push(Box::new(format!("{}%", value)));
+                clauses.push(format!("{} LIKE ${}", col, params.len()));
+            }
+            "ends_with" => {
+                params.push(Box::new(format!("%{}", value)));
+                clauses.push(format!("{} LIKE ${}", col, params.len()));
+            }
+            "is_null" => {
+                clauses.push(format!("{} IS NULL", col));
+            }
+            "is_not_null" => {
+                clauses.push(format!("{} IS NOT NULL", col));
+            }
+            _ => {} // unknown operator: skip filter
+        }
+    }
+    if clauses.is_empty() {
+        (String::new(), Vec::new())
+    } else {
+        (format!(" WHERE {}", clauses.join(" AND ")), params)
+    }
+}
+
+pub async fn pg_get_table_data(client: &PgClient, schema: &str, table: &str, page: i64, page_size: i64, sort_col: Option<&str>, sort_dir: Option<&str>, filters: &[TableFilter]) -> Result<TableDataResult, String> {
     let order = match (sort_col, sort_dir) {
-        (Some(c), Some(d)) if !c.is_empty() => format!(" ORDER BY \"{}\" {}", c, if d == "desc" { "DESC" } else { "ASC" }),
+        (Some(c), Some(d)) if !c.is_empty() => format!(" ORDER BY \"{}\" {}", c.replace('"', "\"\""), if d == "desc" { "DESC" } else { "ASC" }),
         _ => " ORDER BY 1".to_string(),
     };
+    let (where_clause, params) = build_filter_where(filters);
     let offset = (page - 1).max(0) * page_size;
-    let count_q = format!("SELECT COUNT(*) FROM \"{}\".\"{}\"", schema, table);
-    let total: i64 = tokio::time::timeout(std::time::Duration::from_secs(30), client.query_one(&count_q, &[]))
+    let count_q = format!("SELECT COUNT(*) FROM \"{}\".\"{}\"{}", schema, table, where_clause);
+    let total: i64 = tokio::time::timeout(std::time::Duration::from_secs(30), query_one_with_params(client, &count_q, &params))
         .await
         .map_err(|_| "Count timed out (30s)".to_string())?
         .map_err(|e| format!("count: {}", e))?
         .get(0);
-    let data_q = format!("SELECT * FROM \"{}\".\"{}\"{}{} LIMIT {} OFFSET {}", schema, table, order, if sort_col.is_some() && !sort_col.unwrap_or_default().is_empty() { "" } else { " NULLS LAST" }, page_size, offset);
-    let data_rows = tokio::time::timeout(std::time::Duration::from_secs(30), client.query(&data_q, &[]))
+    let data_q = format!("SELECT * FROM \"{}\".\"{}\"{}{} LIMIT {} OFFSET {}", schema, table, where_clause, order, page_size, offset);
+    let data_rows = tokio::time::timeout(std::time::Duration::from_secs(30), query_with_params(client, &data_q, &params))
         .await
         .map_err(|_| "Query timed out (30s)".to_string())?
         .map_err(|e| format!("data: {}", e))?;
@@ -720,6 +779,26 @@ pub async fn pg_get_table_data(client: &PgClient, schema: &str, table: &str, pag
         map
     }).collect();
     Ok(TableDataResult { columns: cols, rows, total_count: total })
+}
+
+/// Run a query with an optional set of bound parameters.
+async fn query_with_params(client: &PgClient, sql: &str, params: &[Box<dyn ToSql + Send + Sync>]) -> Result<Vec<tokio_postgres::Row>, tokio_postgres::Error> {
+    if params.is_empty() {
+        client.query(sql, &[]).await
+    } else {
+        let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
+        client.query(sql, &refs).await
+    }
+}
+
+/// Like `query_with_params` but requires exactly one row (for COUNT etc.).
+async fn query_one_with_params(client: &PgClient, sql: &str, params: &[Box<dyn ToSql + Send + Sync>]) -> Result<tokio_postgres::Row, tokio_postgres::Error> {
+    if params.is_empty() {
+        client.query_one(sql, &[]).await
+    } else {
+        let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
+        client.query_one(sql, &refs).await
+    }
 }
 
 pub async fn pg_execute_query(client: &PgClient, query: &str) -> Result<QueryResult, String> {
@@ -2057,5 +2136,43 @@ mod tests {
         let enum_ty = Type::new("billing_type".into(), 999, Kind::Enum(vec!["monthly".into(), "once".into()]), "public".into());
         let raw = RawBytes::from_sql(&enum_ty, b"monthly").unwrap();
         assert_eq!(String::from_utf8(raw.0).unwrap(), "monthly");
+    }
+
+    #[test]
+    fn filter_where_empty_for_no_filters() {
+        let (clause, params) = build_filter_where(&[]);
+        assert_eq!(clause, "");
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn filter_where_builds_parameterized_clauses() {
+        let filters = vec![
+            TableFilter { column: "id".into(), operator: "eq".into(), value: Some("5".into()) },
+            TableFilter { column: "name".into(), operator: "contains".into(), value: Some("jo".into()) },
+            TableFilter { column: "deleted_at".into(), operator: "is_null".into(), value: None },
+        ];
+        let (clause, params) = build_filter_where(&filters);
+        assert_eq!(clause, " WHERE \"id\" = $1 AND \"name\" ILIKE $2 AND \"deleted_at\" IS NULL");
+        assert_eq!(params.len(), 2);
+    }
+
+    #[test]
+    fn filter_where_escapes_quotes_in_column() {
+        let filters = vec![
+            TableFilter { column: "na\"me".into(), operator: "eq".into(), value: Some("x".into()) },
+        ];
+        let (clause, _) = build_filter_where(&filters);
+        assert!(clause.contains("\"na\"\"me\" = $1"), "quote must be doubled");
+    }
+
+    #[test]
+    fn filter_where_unknown_operator_is_skipped() {
+        let filters = vec![
+            TableFilter { column: "id".into(), operator: "bogus".into(), value: Some("1".into()) },
+        ];
+        let (clause, params) = build_filter_where(&filters);
+        assert_eq!(clause, "");
+        assert!(params.is_empty());
     }
 }
