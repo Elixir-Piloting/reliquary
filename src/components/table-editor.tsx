@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,14 @@ const PARAM_TYPES = new Set(["VARCHAR", "CHAR", "DECIMAL", "NUMERIC", "TIMESTAMP
 
 const FK_ACTIONS = ["NO ACTION", "CASCADE", "SET NULL", "RESTRICT"] as const;
 
+/** Shared grid template for the column header + rows (7 cells). */
+const COL_GRID = "grid-cols-[3rem_minmax(8rem,1fr)_8rem_5rem_7rem_minmax(10rem,1fr)_2.5rem]";
+
+/** Vertical divider on every cell except the first column. */
+const cellClass = "border-l border-border/60 first:border-l-0";
+
 interface NewColumn {
+  id: string;
   name: string;
   type: string;
   parameter: string;
@@ -39,7 +46,10 @@ interface ForeignKeyDraft {
   onUpdate: string;
 }
 
-const emptyColumn = (): NewColumn => ({ name: "", type: "TEXT", parameter: "", nullable: true, defaultValue: "", primaryKey: false, autoIncrement: false, unique: false });
+let idCounter = 0;
+const nextId = () => `col-${Date.now()}-${idCounter++}`;
+
+const emptyColumn = (): NewColumn => ({ id: nextId(), name: "", type: "TEXT", parameter: "", nullable: true, defaultValue: "", primaryKey: false, autoIncrement: false, unique: false });
 
 const emptyFk = (schema: string): ForeignKeyDraft => ({ column: "", refSchema: schema, refTable: "", refColumn: "", onDelete: "NO ACTION", onUpdate: "NO ACTION" });
 
@@ -56,7 +66,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const isCreate = mode === "create";
   const [tableName, setTableName] = useState(isCreate ? "" : table || "");
   const [columns, setColumns] = useState<NewColumn[]>(isCreate
-    ? [{ name: "id", type: "BIGINT", parameter: "", nullable: false, defaultValue: "", primaryKey: true, autoIncrement: true, unique: false }]
+    ? [{ ...emptyColumn(), name: "id", type: "BIGINT", nullable: false, primaryKey: true, autoIncrement: true }]
     : []);
   const [existingCols, setExistingCols] = useState<ColumnInfo[]>([]);
   const [loading, setLoading] = useState(!isCreate);
@@ -66,11 +76,13 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const [draft, setDraft] = useState("");
 
   // Foreign keys (UI only for now).
-  const [fkOpen, setFkOpen] = useState(false);
   const [fkDrafts, setFkDrafts] = useState<ForeignKeyDraft[]>([]);
   const [fkForm, setFkForm] = useState<ForeignKeyDraft>(() => emptyFk(schema));
   const [refTables, setRefTables] = useState<TableInfo[]>([]);
   const [refColumns, setRefColumns] = useState<ColumnInfo[]>([]);
+
+  // Row element refs (keyed by column id) for the FLIP reorder animation.
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const reload = useCallback(async () => {
     if (!table) return;
@@ -99,7 +111,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   useEffect(() => {
     if (!fkForm.refTable) { setRefColumns([]); return; }
     invoke<ColumnInfo[]>("get_columns", { connectionId, schema: fkForm.refSchema, table: fkForm.refTable })
-      .then(cs => { setRefColumns(cs || []); setFkForm(f => ({ ...f, refColumn: cs && cs.length > 0 ? "" : "" })); })
+      .then(cs => { setRefColumns(cs || []); setFkForm(f => ({ ...f, refColumn: "" })); })
       .catch(() => setRefColumns([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fkForm.refTable, fkForm.refSchema, connectionId]);
@@ -109,13 +121,39 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const updateColumn = (i: number, field: keyof NewColumn, value: any) =>
     setColumns(prev => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
 
+  /** Move a column up/down with a FLIP animation (rows glide, not snap). */
   const moveColumn = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    const current = columns;
+    if (j < 0 || j >= current.length) return;
+    const a = current[i];
+    const b = current[j];
+    const elA = rowRefs.current[a.id];
+    const elB = rowRefs.current[b.id];
+    const fromA = elA?.getBoundingClientRect().top ?? 0;
+    const fromB = elB?.getBoundingClientRect().top ?? 0;
+
     setColumns(prev => {
       const next = [...prev];
-      const j = i + dir;
-      if (j < 0 || j >= next.length) return prev;
       [next[i], next[j]] = [next[j], next[i]];
       return next;
+    });
+
+    // After the DOM reflects the swap, animate each row from its old top to its
+    // new top (FLIP: First, Last, Invert, Play).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const toA = elA?.getBoundingClientRect().top ?? 0;
+        const toB = elB?.getBoundingClientRect().top ?? 0;
+        elA?.animate(
+          [{ transform: `translateY(${fromA - toA}px)` }, { transform: "translateY(0)" }],
+          { duration: 220, easing: "ease-out" }
+        );
+        elB?.animate(
+          [{ transform: `translateY(${fromB - toB}px)` }, { transform: "translateY(0)" }],
+          { duration: 220, easing: "ease-out" }
+        );
+      });
     });
   };
 
@@ -222,7 +260,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     const fk = { ...fkForm };
     setFkDrafts(prev => [...prev, fk]);
     setFkForm(emptyFk(schema));
-    setFkOpen(false);
   };
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
@@ -320,70 +357,79 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
             </div>
           )}
 
-          {/* Column editor — header row + rows */}
+          {/* Column editor — header row + rows (no wrapper, vertical dividers only) */}
           <div className="space-y-3">
             <Label>{isCreate ? "Columns" : "Add New Columns"}</Label>
-            <div className="border border-border rounded-lg overflow-hidden">
-              {/* Header */}
-              <div className="grid grid-cols-[2.5rem_1fr_9rem_5rem_7rem_1fr] md:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_10rem_1fr] lg:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_12rem_1fr] items-center gap-2 px-3 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b border-border">
-                <div className="flex items-center justify-center">#</div>
-                <div>Name</div>
-                <div>Type</div>
-                <div>Params</div>
-                <div>Default</div>
-                <div>Constraints</div>
-                <div />
-              </div>
-              {columns.map((col, i) => {
-                const isLast = i === columns.length - 1;
-                const isFirst = i === 0;
-                const showParam = PARAM_TYPES.has(col.type.toUpperCase());
-                return (
-                  <div key={i} className="grid grid-cols-[2.5rem_1fr_9rem_5rem_7rem_1fr] md:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_10rem_1fr] lg:grid-cols-[2.5rem_1fr_9rem_6rem_7rem_12rem_1fr] items-center gap-2 px-3 py-2 border-b border-border last:border-b-0 text-sm">
-                    {/* # + reorder */}
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span className="text-xs text-muted-foreground tabular-nums">{i + 1}</span>
-                      <div className="flex items-center">
-                        <button onClick={() => moveColumn(i, -1)} disabled={isFirst} className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move up"><ChevronUp className="h-3 w-3" /></button>
-                        <button onClick={() => moveColumn(i, 1)} disabled={isLast} className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move down"><ChevronDown className="h-3 w-3" /></button>
-                      </div>
-                    </div>
+            <div className={COL_GRID + " grid items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground"}>
+              <div className={cellClass + " flex items-center justify-center"}>#</div>
+              <div className={cellClass}>Name</div>
+              <div className={cellClass}>Type</div>
+              <div className={cellClass}>Params</div>
+              <div className={cellClass}>Default</div>
+              <div className={cellClass}>Constraints</div>
+              <div className={cellClass} />
+            </div>
+            {columns.map((col, i) => {
+              const isLast = i === columns.length - 1;
+              const isFirst = i === 0;
+              const showParam = PARAM_TYPES.has(col.type.toUpperCase());
+              return (
+                <div key={col.id} ref={el => { rowRefs.current[col.id] = el; }}
+                  className={COL_GRID + " grid items-center gap-2 px-3 py-1.5 text-sm"}>
+                  {/* # with stacked up/down chevrons */}
+                  <div className={cellClass + " flex flex-col items-center py-0.5"}>
+                    <button onClick={() => moveColumn(i, -1)} disabled={isFirst}
+                      className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move up">
+                      <ChevronUp className="h-3 w-3" />
+                    </button>
+                    <span className="text-xs text-muted-foreground tabular-nums leading-tight">{i + 1}</span>
+                    <button onClick={() => moveColumn(i, 1)} disabled={isLast}
+                      className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move down">
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div className={cellClass}>
                     <Input value={col.name} onChange={e => updateColumn(i, "name", e.target.value)} placeholder="column_name" className="h-8 text-sm" />
+                  </div>
+                  <div className={cellClass}>
                     <Select value={col.type} onValueChange={v => updateColumn(i, "type", v)}>
                       <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
                       <SelectContent>{COLUMN_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                     </Select>
+                  </div>
+                  <div className={cellClass}>
                     {showParam ? (
                       <Input value={col.parameter} onChange={e => updateColumn(i, "parameter", e.target.value)} placeholder="(255)" className="h-8 text-sm" />
-                    ) : <div />}
-                    <Input value={col.defaultValue} onChange={e => updateColumn(i, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
-                    {/* Constraints */}
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Primary key">
-                        <Checkbox checked={col.primaryKey} onCheckedChange={(v) => { updateColumn(i, "primaryKey", !!v); if (v) updateColumn(i, "nullable", false); }} />PK
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Auto increment">
-                        <Checkbox checked={col.autoIncrement} onCheckedChange={(v) => updateColumn(i, "autoIncrement", !!v)} />AI
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Unique">
-                        <Checkbox checked={col.unique} onCheckedChange={(v) => updateColumn(i, "unique", !!v)} />UQ
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Nullable">
-                        <Checkbox checked={col.nullable} onCheckedChange={(v) => updateColumn(i, "nullable", !!v)} disabled={col.primaryKey} />Null
-                      </label>
-                    </div>
-                    <div className="flex items-center justify-end gap-1">
-                      {!isCreate && (
-                        <Button size="sm" onClick={() => handleAddColumn(col)} disabled={saving || !col.name.trim()} className="h-8" title="Add this column">
-                          <Check className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      <Button variant="ghost" size="icon" onClick={() => removeColumn(i)} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Remove column"><X className="h-4 w-4" /></Button>
-                    </div>
+                    ) : null}
                   </div>
-                );
-              })}
-            </div>
+                  <div className={cellClass}>
+                    <Input value={col.defaultValue} onChange={e => updateColumn(i, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
+                  </div>
+                  <div className={cellClass + " flex items-center gap-3"}>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Primary key">
+                      <Checkbox checked={col.primaryKey} onCheckedChange={(v) => { updateColumn(i, "primaryKey", !!v); if (v) updateColumn(i, "nullable", false); }} />PK
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Auto increment">
+                      <Checkbox checked={col.autoIncrement} onCheckedChange={(v) => updateColumn(i, "autoIncrement", !!v)} />AI
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Unique">
+                      <Checkbox checked={col.unique} onCheckedChange={(v) => updateColumn(i, "unique", !!v)} />UQ
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Nullable">
+                      <Checkbox checked={col.nullable} onCheckedChange={(v) => updateColumn(i, "nullable", !!v)} disabled={col.primaryKey} />Null
+                    </label>
+                  </div>
+                  <div className={cellClass + " flex items-center justify-end gap-1"}>
+                    {!isCreate && (
+                      <Button size="sm" onClick={() => handleAddColumn(col)} disabled={saving || !col.name.trim()} className="h-7" title="Add this column">
+                        <Check className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="icon" onClick={() => removeColumn(i)} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Remove column"><X className="h-4 w-4" /></Button>
+                  </div>
+                </div>
+              );
+            })}
             {columns.length === 0 && !isCreate && (
               <p className="text-sm text-muted-foreground text-center py-4">No new columns queued. Add one below.</p>
             )}
@@ -394,76 +440,46 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
           {isCreate && (
             <div className="space-y-3">
               <Label>Foreign Keys</Label>
-              {fkDrafts.length > 0 && (
-                <div className="space-y-1.5">
-                  {fkDrafts.map((fk, i) => (
-                    <div key={i} className="flex items-center gap-2 border border-border rounded-md px-3 py-2 text-sm text-muted-foreground">
-                      <KeyRound className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                      <span className="font-mono">{fk.column || "?"}</span>
-                      <span>→</span>
-                      <span className="font-mono">{fk.refTable ? `${fk.refSchema}.${fk.refTable}.${fk.refColumn || "?"}` : "?"}</span>
-                      <span className="text-xs">ON DELETE {fk.onDelete} · ON UPDATE {fk.onUpdate}</span>
-                      <Button variant="ghost" size="icon" className="ml-auto h-6 w-6" onClick={() => setFkDrafts(prev => prev.filter((_, idx) => idx !== i))}><X className="h-3.5 w-3.5" /></Button>
-                    </div>
-                  ))}
+              {fkDrafts.map((fk, i) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground border-b border-border/60 last:border-b-0">
+                  <KeyRound className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <span className="font-mono">{fk.column || "?"}</span>
+                  <span>→</span>
+                  <span className="font-mono">{fk.refTable ? `${fk.refSchema}.${fk.refTable}.${fk.refColumn || "?"}` : "?"}</span>
+                  <span className="text-xs">ON DELETE {fk.onDelete} · ON UPDATE {fk.onUpdate}</span>
+                  <Button variant="ghost" size="icon" className="ml-auto h-6 w-6" onClick={() => setFkDrafts(prev => prev.filter((_, idx) => idx !== i))}><X className="h-3.5 w-3.5" /></Button>
                 </div>
-              )}
-              {fkOpen ? (
-                <div className="border border-border rounded-lg p-4 space-y-3 bg-muted/10">
-                  <div className="flex items-center justify-between">
-                    <Label>Add Foreign Key</Label>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setFkOpen(false)}><X className="h-4 w-4" /></Button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Column</Label>
-                      <Select value={fkForm.column} onValueChange={v => setFkForm(f => ({ ...f, column: v }))}>
-                        <SelectTrigger className="h-8"><SelectValue placeholder="Select column" /></SelectTrigger>
-                        <SelectContent>
-                          {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Reference table</Label>
-                      <Select value={fkForm.refTable} onValueChange={v => setFkForm(f => ({ ...f, refTable: v }))}>
-                        <SelectTrigger className="h-8"><SelectValue placeholder="Select table" /></SelectTrigger>
-                        <SelectContent>
-                          {refTables.map(t => <SelectItem key={t.tableName} value={t.tableName}>{t.tableName}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Reference column</Label>
-                      <Select value={fkForm.refColumn} onValueChange={v => setFkForm(f => ({ ...f, refColumn: v }))} disabled={!fkForm.refTable}>
-                        <SelectTrigger className="h-8"><SelectValue placeholder="Select column" /></SelectTrigger>
-                        <SelectContent>
-                          {refColumns.map(c => <SelectItem key={c.columnName} value={c.columnName}>{c.columnName}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">On delete</Label>
-                        <Select value={fkForm.onDelete} onValueChange={v => setFkForm(f => ({ ...f, onDelete: v }))}>
-                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">On update</Label>
-                        <Select value={fkForm.onUpdate} onValueChange={v => setFkForm(f => ({ ...f, onUpdate: v }))}>
-                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </div>
-                  <Button size="sm" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn}><KeyRound className="h-3.5 w-3.5 mr-1" />Add Foreign Key</Button>
-                </div>
-              ) : (
-                <Button variant="outline" size="sm" onClick={() => setFkOpen(true)}><KeyRound className="h-4 w-4 mr-1" />Add Foreign Key</Button>
-              )}
+              ))}
+              {/* Inline add row — same style as the column editor, one row, no wrapper */}
+              <div className="grid grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_8rem_8rem_2rem] items-center gap-2 px-3 py-1.5 text-sm">
+                <Select value={fkForm.column} onValueChange={v => setFkForm(f => ({ ...f, column: v }))}>
+                  <SelectTrigger className="h-8"><SelectValue placeholder="Column" /></SelectTrigger>
+                  <SelectContent>
+                    {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={fkForm.refTable} onValueChange={v => setFkForm(f => ({ ...f, refTable: v }))}>
+                  <SelectTrigger className="h-8"><SelectValue placeholder="Ref table" /></SelectTrigger>
+                  <SelectContent>
+                    {refTables.map(t => <SelectItem key={t.tableName} value={t.tableName}>{t.tableName}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={fkForm.refColumn} onValueChange={v => setFkForm(f => ({ ...f, refColumn: v }))} disabled={!fkForm.refTable}>
+                  <SelectTrigger className="h-8"><SelectValue placeholder="Ref column" /></SelectTrigger>
+                  <SelectContent>
+                    {refColumns.map(c => <SelectItem key={c.columnName} value={c.columnName}>{c.columnName}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={fkForm.onDelete} onValueChange={v => setFkForm(f => ({ ...f, onDelete: v }))}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON DELETE" /></SelectTrigger>
+                  <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={fkForm.onUpdate} onValueChange={v => setFkForm(f => ({ ...f, onUpdate: v }))}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON UPDATE" /></SelectTrigger>
+                  <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                </Select>
+                <Button variant="ghost" size="icon" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn} className="h-8 w-8 text-muted-foreground hover:text-foreground" title="Add foreign key"><Plus className="h-4 w-4" /></Button>
+              </div>
             </div>
           )}
 
