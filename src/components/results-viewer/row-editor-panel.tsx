@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, KeyRound, X } from "lucide-react";
+import { Loader2, KeyRound, ChevronRight } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getInputType, isPotentialEnum, toSqlParamValue, formatValueForInput, displayValueToString } from "./field-types";
 import type { RowMutationStatement } from "@/lib/db/types";
@@ -191,7 +191,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
           <p className="text-sm font-semibold leading-tight">{mode === 'edit' ? 'Edit Row' : 'Insert Row'}</p>
           <p className="truncate font-mono text-xs text-muted-foreground">{schema}.{table}</p>
         </div>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}><X className="h-4 w-4" /></Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} title="Close editor"><ChevronRight className="h-4 w-4" /></Button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-3">
         <div className="space-y-3">

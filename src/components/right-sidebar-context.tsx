@@ -4,15 +4,24 @@ import { createContext, useCallback, useContext, useState, ReactNode } from "rea
 interface RightSidebarContextType {
   open: boolean;
   content: ReactNode;
+  setOpen: (open: boolean) => void;
+  setContent: (content: ReactNode) => void;
+  /** Set content AND open the sidebar (insert row, etc.). */
   openRight: (content: ReactNode) => void;
+  /** Slide the sidebar closed, keeping the current content mounted. */
   closeRight: () => void;
+  /** Close and drop content (component unmount). */
+  clearRight: () => void;
 }
 
 const RightSidebarContext = createContext<RightSidebarContextType>({
   open: false,
   content: null,
+  setOpen: () => {},
+  setContent: () => {},
   openRight: () => {},
   closeRight: () => {},
+  clearRight: () => {},
 });
 
 export function RightSidebarProvider({ children }: { children: ReactNode }) {
@@ -23,13 +32,14 @@ export function RightSidebarProvider({ children }: { children: ReactNode }) {
     setContent(c);
     setOpen(true);
   }, []);
-  const closeRight = useCallback(() => {
+  const closeRight = useCallback(() => setOpen(false), []);
+  const clearRight = useCallback(() => {
     setOpen(false);
     setContent(null);
   }, []);
 
   return (
-    <RightSidebarContext.Provider value={{ open, content, openRight, closeRight }}>
+    <RightSidebarContext.Provider value={{ open, content, setOpen, setContent, openRight, closeRight, clearRight }}>
       {children}
     </RightSidebarContext.Provider>
   );

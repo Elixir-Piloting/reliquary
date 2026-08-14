@@ -131,7 +131,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         {children}
       </div>
-      <RightSidebar open={rightSidebar.open} widthClass="w-[380px]">
+      <RightSidebar open={rightSidebar.open} width={380}>
         {rightSidebar.content}
       </RightSidebar>
     </div>

@@ -155,14 +155,16 @@ export function ResultsViewer({
   const canEdit = enableCRUD && !readOnly && schema && table && pkColumns && pkColumns.length > 0 && connectionId;
   const displayResult = localRows ? { ...result, rows: localRows } : result;
 
-  // Drive the top-level right sidebar from the local editor state. The panel
-  // itself is rendered into the sidebar by `MainLayout` via the context.
+  // Drive the top-level right sidebar content from the local editor state. The
+  // panel is always mounted into `MainLayout`'s sidebar; this effect only swaps
+  // its content (so clicking a cell can stage a row's form without opening the
+  // sidebar). Opening is controlled by the insert action and the navbar toggle.
   useEffect(() => {
     if (!editor || !canEdit || !schema || !table || !connectionId) {
-      rightSidebar.closeRight();
+      rightSidebar.setContent(null);
       return;
     }
-    rightSidebar.openRight(
+    rightSidebar.setContent(
       <RowEditorPanel
         open
         mode={editor.mode}
@@ -191,7 +193,7 @@ export function ResultsViewer({
 
   // Close the right sidebar if this grid unmounts while the editor is open.
   useEffect(() => {
-    return () => rightSidebar.closeRight();
+    return () => rightSidebar.clearRight();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -287,7 +289,10 @@ export function ResultsViewer({
 
   const handleCancelEdit = () => setEditingCell(null);
 
-  const handleOpenInsert = () => setEditor({ mode: 'insert', row: null });
+  const handleOpenInsert = () => {
+    setEditor({ mode: 'insert', row: null });
+    rightSidebar.setOpen(true);
+  };
   const handleStageRowEdits = (changes: PendingChange[]) => {
     setPendingChanges(prev => [...prev, ...changes]);
     toast.info(`${changes.length} change${changes.length !== 1 ? 's' : ''} staged — review & apply to commit`);
@@ -528,7 +533,7 @@ export function ResultsViewer({
                           className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
                           style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
                           onDoubleClick={(e) => { e.stopPropagation(); if (!pendingDelete) handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
-                          onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); }} title={showNull ? "NULL" : displayValueToString(displayValue)}>
+                          onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); if (!pendingDelete) handleRowClick(row); }} title={showNull ? "NULL" : displayValueToString(displayValue)}>
                           {isEditing ? (inputType === 'select-boolean' ? (
                             <InlineSelect
                               value={editValue} options={['true', 'false', '']} labels={['true', 'false', 'NULL']}

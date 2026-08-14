@@ -1,12 +1,13 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Code2, Table, Network, PanelLeft, PanelLeftClose } from "lucide-react";
+import { Code2, Table, Network, PanelLeft, PanelLeftClose, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Persistence } from "@/lib/persistence";
 import { useSidebar } from "@/components/sidebar-context";
+import { useRightSidebar } from "@/components/right-sidebar-context";
 import { useConnections } from "@/lib/query/hooks/use-connections";
 import { RolesPanel } from "@/components/roles-panel";
 import { NeonBranchSwitcher } from "@/components/neon-branch-switcher";
@@ -36,6 +37,7 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebar();
+  const rightSidebar = useRightSidebar();
   const { data: connections = [] } = useConnections();
   const [connInfo, setConnInfo] = useState<ConnectionInfo | null>(null);
 
@@ -97,8 +99,7 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
       })}
       <div className="flex-1" />
       <TooltipProvider delayDuration={300}>
-        <div className="flex items-center gap-2 mr-1">
-          <ProviderBadge provider={provider} />
+        <div className="flex items-center gap-2 mr-1">          <ProviderBadge provider={provider} />
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="text-xs text-muted-foreground truncate max-w-[200px] cursor-default">
@@ -120,6 +121,15 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
         )}
       </TooltipProvider>
       {connectionId && <RolesPanel connectionId={connectionId} />}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => rightSidebar.setOpen(!rightSidebar.open)}
+            aria-label={rightSidebar.open ? "Close editor" : "Open editor"}>
+            {rightSidebar.open ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{rightSidebar.open ? "Close editor" : "Open editor"}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
