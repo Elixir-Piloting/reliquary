@@ -121,15 +121,17 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
         )}
       </TooltipProvider>
       {connectionId && <RolesPanel connectionId={connectionId} />}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => rightSidebar.setOpen(!rightSidebar.open)}
-            aria-label={rightSidebar.open ? "Close editor" : "Open editor"}>
-            {rightSidebar.open ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">{rightSidebar.open ? "Close editor" : "Open editor"}</TooltipContent>
-      </Tooltip>
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => rightSidebar.setOpen(!rightSidebar.open)}
+              aria-label={rightSidebar.open ? "Close editor" : "Open editor"}>
+              {rightSidebar.open ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{rightSidebar.open ? "Close editor" : "Open editor"}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   );
 }
