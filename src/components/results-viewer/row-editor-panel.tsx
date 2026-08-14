@@ -354,7 +354,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
         <div className="flex items-center gap-2">
           {mode === 'edit' && row && onDeleteRow && (
-            <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onDeleteRow(row)} disabled={saving}>
+            <Button variant="destructive" size="sm" onClick={() => onDeleteRow(row)} disabled={saving}>
               <Trash2 className="h-3.5 w-3.5 mr-1" />Delete
             </Button>
           )}

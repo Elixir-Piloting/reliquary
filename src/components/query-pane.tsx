@@ -15,6 +15,7 @@ import type { QueryResult } from "@/lib/db/types";
 import { Play, Plus, Loader2, FlaskConical, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface QueryPaneTransient {
   result: QueryResult | null;
@@ -153,19 +154,34 @@ export function QueryPane({ connectionId, tab, onQueryChange, onNewTab }: QueryP
       <div className="h-12 border-b border-border flex items-center gap-2 px-4 shrink-0 overflow-x-auto">
         <Button size="sm" onClick={handleExecute} disabled={t.loading || !currentQuery.trim()}>
           {t.loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
-          Run Query
-          <span className="ml-1.5 hidden rounded border border-white/30 px-1.5 py-0.5 text-[10px] font-normal leading-none opacity-80 md:inline">Ctrl/⌘ + Enter</span>
+          Run Query · Ctrl/⌘ + Enter
         </Button>
         <div className="flex-1" />
         <QueryHistory connectionId={connectionId} onSelect={onQueryChange} />
-        <Button variant="outline" size="sm" onClick={runExplain} disabled={t.explainLoading || !currentQuery.trim()} title="EXPLAIN (FORMAT JSON) the current query">
-          {t.explainLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FlaskConical className="h-4 w-4 mr-2" />}
-          Explain
-        </Button>
-        <Button variant={t.analyze ? "default" : "outline"} size="sm" onClick={() => setTransient(p => ({ ...p, analyze: !p.analyze }))}
-          className={cn(t.analyze && "bg-green-600 hover:bg-green-700")} title="Run EXPLAIN ANALYZE (executes the query — read-only queries only)">
-          Analyze
-        </Button>
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={runExplain} disabled={t.explainLoading || !currentQuery.trim()}>
+                {t.explainLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FlaskConical className="h-4 w-4 mr-2" />}
+                Explain
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Show the query plan (does not execute the query)</p></TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant={t.analyze ? "default" : "outline"} size="sm" onClick={() => setTransient(p => ({ ...p, analyze: !p.analyze }))}
+                className={cn(t.analyze && "bg-green-600 hover:bg-green-700")}>
+                Analyze
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>{t.analyze ? "Analyze is ON - Explain will execute the query and show real timings" : "Analyze is OFF - toggle to run EXPLAIN ANALYZE with real timings"}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <SafeModeToggle enabled={t.safeMode} onToggle={enabled => { setTransient(p => ({ ...p, safeMode: enabled })); Persistence.setSafeMode(connectionId, enabled); }} />
         <Button variant="ghost" size="sm" onClick={onNewTab}><Plus className="h-4 w-4" /></Button>
       </div>
