@@ -186,8 +186,13 @@ export function ResultsViewer({
       return;
     }
     const staged = stagedForRow(editor.row || {});
+    // Re-mount the panel whenever this row's staged state changes so the
+    // inspector always reflects the latest inline edits (captured sidebar
+    // elements keep stale internal state otherwise).
+    const panelKey = editor.row ? JSON.stringify([...staged.entries()].sort()) : "none";
     rightSidebar.setContent(
       <RowEditorPanel
+        key={panelKey}
         open
         mode={editor.mode}
         connectionId={connectionId}
