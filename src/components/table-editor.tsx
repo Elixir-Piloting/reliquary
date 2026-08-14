@@ -57,6 +57,32 @@ const emptyColumn = (): NewColumn => ({ id: nextId(), name: "", type: "TEXT", nu
 
 const emptyFk = (schema: string): ForeignKeyDraft => ({ id: nextId(), column: "", refSchema: schema, refTable: "", refColumn: "", onDelete: "NO ACTION", onUpdate: "NO ACTION" });
 
+/** Generate the CREATE TABLE SQL from the edited columns and foreign keys. */
+export function buildTableSql(
+  schema: string,
+  tableName: string,
+  columns: NewColumn[],
+  fkDrafts: ForeignKeyDraft[]
+): string {
+  const cols = columns.map(c => {
+    let def = `"${c.name}" ${c.type}`;
+    if (c.autoIncrement && /INT|SERIAL/i.test(c.type)) def += " GENERATED ALWAYS AS IDENTITY";
+    if (c.primaryKey) def += " PRIMARY KEY";
+    else if (!c.nullable) def += " NOT NULL";
+    if (c.unique && !c.primaryKey) def += " UNIQUE";
+    if (c.defaultValue) def += ` DEFAULT ${c.defaultValue}`;
+    return def;
+  });
+  const fks = fkDrafts
+    .filter(fk => fk.column.trim() && fk.refTable.trim() && fk.refColumn.trim())
+    .map(fk =>
+      `FOREIGN KEY ("${fk.column}") REFERENCES "${fk.refSchema}"."${fk.refTable}"("${fk.refColumn}") ` +
+      `ON DELETE ${fk.onDelete} ON UPDATE ${fk.onUpdate}`
+    );
+  const body = [...cols, ...fks].join(",\n  ");
+  return `CREATE TABLE "${schema}"."${tableName}" (\n  ${body}\n);`;
+}
+
 /** A default-value input that adapts to the column type. */
 function DefaultValueControl({ type, value, nullable, onChange }: { type: string; value: string; nullable: boolean; onChange: (v: string) => void }) {
   const t = type.toUpperCase();
@@ -233,18 +259,9 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     setColumns(prev => arrayMove(prev, oldIndex, newIndex));
   };
 
-  const buildCreateSQL = useCallback((): string => {
-    const cols = columns.map(c => {
-      let def = `"${c.name}" ${c.type}`;
-      if (c.autoIncrement && /INT|SERIAL/i.test(c.type)) def += " GENERATED ALWAYS AS IDENTITY";
-      if (c.primaryKey) def += " PRIMARY KEY";
-      else if (!c.nullable) def += " NOT NULL";
-      if (c.unique && !c.primaryKey) def += " UNIQUE";
-      if (c.defaultValue) def += ` DEFAULT ${c.defaultValue}`;
-      return def;
-    });
-    return `CREATE TABLE "${schema}"."${tableName}" (\n  ${cols.join(",\n  ")}\n);`;
-  }, [columns, schema, tableName]);
+  const buildCreateSQL = useCallback((): string =>
+    buildTableSql(schema, tableName, columns, fkDrafts),
+  [columns, fkDrafts, schema, tableName]);
 
   // In create mode, surface the generated SQL in the right sidebar (context-aware
   // "row inspector" panel) instead of an inline preview.
