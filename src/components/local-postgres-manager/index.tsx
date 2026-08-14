@@ -46,8 +46,13 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
         const dbs = await loadDatabases.mutateAsync({ host: server.host, port: server.port, user: saved.user, password: saved.password });
         setDatabases(prev => ({ ...prev, [key]: dbs }));
       } catch {
-        const dbs = await loadDatabases.mutateAsync({ host: server.host, port: server.port });
-        setDatabases(prev => ({ ...prev, [key]: dbs }));
+        // Saved credentials failed (wrong/expired password). Surface the dialog
+        // pre-filled so the user can correct it instead of silently stalling.
+        setTempUser(saved.user);
+        setTempPassword(saved.password);
+        setPasswordForServer(server);
+        setSavePassword(true);
+        setShowPasswordDialog(true);
       }
       setLoadingDb(null);
     } else {
@@ -65,10 +70,6 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
     if (!passwordForServer) return;
     const key = `${passwordForServer.host}:${passwordForServer.port}`;
 
-    if (savePassword) {
-      Persistence.setServerPassword(passwordForServer.host, passwordForServer.port, tempUser, tempPassword);
-    }
-
     if (pendingDatabase) {
       handleConnectToDatabase(passwordForServer, pendingDatabase, tempUser, tempPassword);
       setShowPasswordDialog(false);
@@ -81,12 +82,19 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
     try {
       const dbs = await loadDatabases.mutateAsync({ host: passwordForServer.host, port: passwordForServer.port, user: tempUser, password: tempPassword });
       setDatabases(prev => ({ ...prev, [key]: dbs }));
+      // Only persist credentials after a successful connection.
+      if (savePassword) {
+        Persistence.setServerPassword(passwordForServer.host, passwordForServer.port, tempUser, tempPassword);
+      } else {
+        Persistence.removeServerPassword(passwordForServer.host, passwordForServer.port);
+      }
+      setShowPasswordDialog(false);
+      setPasswordForServer(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to connect");
+      // Keep the dialog open so the user can retry with a different password.
+      toast.error(e instanceof Error ? e.message : "Failed to connect", { description: "Check your password and try again." });
     }
     setLoadingDb(null);
-    setShowPasswordDialog(false);
-    setPasswordForServer(null);
   };
 
   const handleConnectToDatabase = (
@@ -150,7 +158,10 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
 
       <Dialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Enter Password</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Enter Password</DialogTitle>
+            <p className="text-sm text-muted-foreground">Connect to {passwordForServer?.host}:{passwordForServer?.port}</p>
+          </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="grid gap-2">
               <Label>Username</Label>
@@ -158,16 +169,29 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
             </div>
             <div className="grid gap-2">
               <Label>Password</Label>
-              <Input type="password" value={tempPassword} onChange={e => setTempPassword(e.target.value)} />
+              <Input type="password" value={tempPassword} onChange={e => setTempPassword(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handlePasswordSubmit(); }} />
             </div>
             <div className="flex items-center gap-2">
               <Checkbox id="save" checked={savePassword} onCheckedChange={c => setSavePassword(!!c)} />
               <label htmlFor="save" className="text-sm">Save password</label>
             </div>
+            {passwordForServer && Persistence.getServerPassword(passwordForServer.host, passwordForServer.port) && (
+              <button
+                onClick={() => {
+                  Persistence.removeServerPassword(passwordForServer.host, passwordForServer.port);
+                  toast.success("Saved password cleared");
+                }}
+                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+              >
+                Forget saved password for this server
+              </button>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPasswordDialog(false)}>Cancel</Button>
-            <Button onClick={handlePasswordSubmit}>Connect</Button>
+            <Button onClick={handlePasswordSubmit} disabled={loadingDb === `${passwordForServer?.host}:${passwordForServer?.port}`}>
+              {loadingDb === `${passwordForServer?.host}:${passwordForServer?.port}` ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Connect
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
