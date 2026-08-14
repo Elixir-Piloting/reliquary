@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio_postgres::Client as PgClient;
 
 // ---------------------------------------------------------------------------
 // Storage types
@@ -20,6 +19,12 @@ pub struct StoredConnection {
     pub color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sslmode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neon_api_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,6 +41,60 @@ pub struct TableInfo {
     pub schema_name: String,
     pub table_type: String,
     pub row_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_rls: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewInfo {
+    pub view_name: String,
+    pub definition: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerInfo {
+    pub trigger_name: String,
+    pub event_manipulation: String,
+    pub action_timing: String,
+    pub action_statement: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionInfo {
+    pub function_name: String,
+    pub arguments: String,
+    pub return_type: String,
+    pub language: String,
+    pub volatility: String,
+    pub security_definer: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RlsPolicyInfo {
+    pub policy_name: String,
+    pub command: String,
+    pub roles: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub using_expression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_expression: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleInfo {
+    pub role_name: String,
+    pub superuser: bool,
+    pub createdb: bool,
+    pub createrole: bool,
+    pub login: bool,
+    pub connection_limit: i32,
+    pub member_of: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -118,6 +177,27 @@ pub struct TestConnectionResult {
     pub server_version: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RowMutationStatement {
+    pub query: String,
+    pub params: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplainResult {
+    pub plan: serde_json::Value,
+    pub execution_time_ms: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryOptions {
+    pub confirm_destructive: bool,
+    pub read_only: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalPgServer {
@@ -139,12 +219,47 @@ pub struct LocalPgDatabase {
     pub size: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NeonBranch {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub primary: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_uri: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionInfo {
+    pub provider: String,
+    pub host: String,
+    pub port: String,
+    pub database: String,
+    pub user: String,
+    pub server_version: String,
+    pub sslmode: String,
+    pub is_supabase: bool,
+    pub is_neon: bool,
+    pub supabase_schemas: Vec<String>,
+    pub read_only: bool,
+    pub pooled_endpoint: bool,
+}
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
 
+pub struct ActiveConnection {
+    pub pool: Arc<deadpool_postgres::Pool>,
+    pub read_only: bool,
+    pub url: String,
+}
+
 pub struct AppState {
-    pub connections: tokio::sync::Mutex<HashMap<String, Arc<PgClient>>>,
+    pub connections: tokio::sync::Mutex<HashMap<String, ActiveConnection>>,
     pub config_path: PathBuf,
 }
 
@@ -169,9 +284,9 @@ impl AppState {
     }
 }
 
-pub fn detect_provider(url: &str) -> &str {
+pub fn detect_provider(url: &str) -> &'static str {
     let lower = url.to_lowercase();
-    if lower.contains("neon.tech") { "neon" }
+    if lower.contains("neon.tech") || lower.contains("neondb") { "neon" }
     else if lower.contains("supabase.co") || lower.contains("pooler.supabase") { "supabase" }
     else { "postgresql" }
 }

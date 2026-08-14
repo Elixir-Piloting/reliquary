@@ -9,13 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-import { getConnections } from "@/lib/connections/store";
 import { getProviderMetadata } from "@/lib/db/providers";
-import { buildConnectionURL } from "@/lib/connections/url-parser";
-import type { ConnectionConfig } from "@/lib/db/types";
+import { useConnections, useConnect } from "@/lib/query/hooks/use-connections";
+import type { Connection } from "@/lib/ipc-client";
 import { ChevronDown, Home, Settings, Plus, Loader2, Pencil } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { invoke } from "@tauri-apps/api/core";
 
 function ProviderIcon({ provider }: { provider: string }) {
   const meta = getProviderMetadata(provider);
@@ -36,29 +34,23 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const { collapsed: sidebarCollapsed } = useSidebar();
   const [connectionsPopoverOpen, setConnectionsPopoverOpen] = useState(false);
-  const [currentConnection, setCurrentConnection] = useState<ConnectionConfig | null>(null);
+  const [currentConnection, setCurrentConnection] = useState<Connection | null>(null);
   const [connecting, setConnecting] = useState(false);
 
-  const connections = getConnections();
+  const { data: connections = [] } = useConnections();
+  const connectMutation = useConnect();
 
   useEffect(() => {
-    if (connections.length > 0 && !currentConnection) {
-      setCurrentConnection(connections[0]);
-    }
+    setCurrentConnection(prev => {
+      if (!prev) return connections[0] ?? null;
+      return connections.find(c => c.id === prev.id) ?? connections[0] ?? null;
+    });
   }, [connections]);
 
-  const handleConnectionSelect = async (conn: ConnectionConfig) => {
+  const handleConnectionSelect = async (conn: Connection) => {
     setConnecting(true);
     try {
-      const url = conn.connectionString || buildConnectionURL({
-        host: conn.host || "localhost",
-        port: conn.port || 5432,
-        database: conn.database || "",
-        user: conn.user || "",
-        password: conn.password || "",
-        ssl: conn.ssl,
-      });
-      await invoke("connect", { connectionId: conn.id, url });
+      await connectMutation.mutateAsync({ connectionId: conn.id, url: conn.url, readOnly: !!conn.readOnly });
       setCurrentConnection(conn);
       setConnectionsPopoverOpen(false);
       navigate(`/db/${conn.id}`);
@@ -81,7 +73,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
               <Button variant="outline" className="w-full justify-between h-8 px-3 text-sm border-0 shadow-none focus:ring-0">
                 {currentConnection ? (
                   <div className="flex items-center gap-2 min-w-0">
-                    <ProviderIcon provider={currentConnection.provider} />
+                    <ProviderIcon provider={currentConnection.provider || "postgresql"} />
                     <span className="truncate">{currentConnection.name}</span>
                   </div>
                 ) : (
@@ -96,11 +88,11 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
                   <div key={conn.id} className={cn("w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors group hover:bg-accent hover:text-accent-foreground", currentConnection?.id === conn.id && "bg-accent text-accent-foreground")}>
                     <button onClick={() => handleConnectionSelect(conn)} disabled={connecting}
                       className="flex items-center gap-2 min-w-0 flex-1">
-                      <ProviderIcon provider={conn.provider} />
-                      <span className="truncate">{conn.name}</span>
+                      <ProviderIcon provider={conn.provider || "postgresql"} />
+                      <span className="truncate">{conn.name}{conn.readOnly ? " (read-only)" : ""}</span>
                       {connecting && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); navigate(`/add-connection/${conn.provider}?connectionId=${conn.id}`); setConnectionsPopoverOpen(false); }}
+                    <button onClick={(e) => { e.stopPropagation(); navigate(`/add-connection/${conn.provider || "postgresql"}?connectionId=${conn.id}`); setConnectionsPopoverOpen(false); }}
                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-accent-foreground/10 rounded transition-opacity">
                       <Pencil className="h-3 w-3" />
                     </button>

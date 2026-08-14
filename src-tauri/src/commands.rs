@@ -1,7 +1,6 @@
-use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use chrono::Utc;
-use tokio_postgres::Client as PgClient;
 
 use crate::types::*;
 use crate::pg;
@@ -12,7 +11,7 @@ pub async fn list_connections(state: tauri::State<'_, AppState>) -> Result<Vec<S
 }
 
 #[tauri::command]
-pub async fn add_connection(name: String, url: String, state: tauri::State<'_, AppState>) -> Result<StoredConnection, String> {
+pub async fn add_connection(name: String, url: String, read_only: bool, state: tauri::State<'_, AppState>) -> Result<StoredConnection, String> {
     let mut config = state.load_config();
     let id = uuid::Uuid::new_v4().to_string();
     let provider = detect_provider(&url).to_string();
@@ -23,6 +22,9 @@ pub async fn add_connection(name: String, url: String, state: tauri::State<'_, A
         provider: Some(provider),
         color: None,
         created_at: Some(Utc::now().to_rfc3339()),
+        sslmode: None,
+        read_only: Some(read_only),
+        neon_api_key: None,
     };
     config.push(conn.clone());
     state.save_config(&config);
@@ -30,11 +32,12 @@ pub async fn add_connection(name: String, url: String, state: tauri::State<'_, A
 }
 
 #[tauri::command]
-pub async fn update_connection(id: String, name: Option<String>, url: Option<String>, state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn update_connection(id: String, name: Option<String>, url: Option<String>, read_only: Option<bool>, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut config = state.load_config();
     if let Some(entry) = config.iter_mut().find(|c| c.id == id) {
         if let Some(n) = name { entry.name = n; }
         if let Some(u) = url { let provider = detect_provider(&u).to_string(); entry.url = u; entry.provider = Some(provider); }
+        if let Some(ro) = read_only { entry.read_only = Some(ro); }
         state.save_config(&config);
         Ok(())
     } else {
@@ -54,8 +57,10 @@ pub async fn delete_connection(id: String, state: tauri::State<'_, AppState>) ->
 #[tauri::command]
 pub async fn test_connection(url: String, _state: tauri::State<'_, AppState>) -> Result<TestConnectionResult, String> {
     if url.to_lowercase().starts_with("postgresql://") || url.to_lowercase().starts_with("postgres://") {
+        let parts = pg::parse_pg_url(&url)?;
         let conn_str = pg::parse_pg_connstr(&url)?;
-        match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await {
+        let tls = pg::build_tls(&parts.sslmode)?;
+        match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tls)).await {
             Ok(Ok((client, connection))) => {
                 tokio::spawn(async move { drop(connection); });
                 let ver = client.query_one("SELECT version()", &[]).await
@@ -72,7 +77,7 @@ pub async fn test_connection(url: String, _state: tauri::State<'_, AppState>) ->
 }
 
 #[tauri::command]
-pub async fn connect(connection_id: String, url: String, state: tauri::State<'_, AppState>) -> Result<String, String> {
+pub async fn connect(connection_id: String, url: String, read_only: bool, state: tauri::State<'_, AppState>) -> Result<String, String> {
     {
         let guard = state.connections.lock().await;
         if guard.contains_key(&connection_id) {
@@ -80,20 +85,32 @@ pub async fn connect(connection_id: String, url: String, state: tauri::State<'_,
         }
     }
 
+    let parts = pg::parse_pg_url(&url)?;
     let conn_str = pg::parse_pg_connstr(&url)?;
-    match tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await {
-        Ok(Ok((client, connection))) => {
-            tokio::spawn(async move {
-                if let Err(e) = connection.await {
-                    eprintln!("connection error: {}", e);
-                }
-            });
-            let ver: String = client.query_one("SELECT version()", &[])
-                .await
-                .map(|r| r.get::<_, String>(0))
-                .unwrap_or_else(|_| "unknown".into());
-            state.connections.lock().await.insert(connection_id.clone(), Arc::new(client));
-            Ok(format!("Connected to PostgreSQL: {}", ver))
+    let tls = pg::build_tls(&parts.sslmode)?;
+    let pg_config = tokio_postgres::Config::from_str(&conn_str)
+        .map_err(|e| format!("Invalid connection string: {}", e))?;
+    let manager = deadpool_postgres::Manager::new(pg_config, tls);
+    let pool = deadpool_postgres::Pool::builder(manager)
+        .max_size(8)
+        .build()
+        .map_err(|e| format!("Failed to build connection pool: {}", e))?;
+    match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let client = pool.get().await?;
+        let ver: String = client.query_one("SELECT version()", &[])
+            .await
+            .map(|r| r.get::<_, String>(0))
+            .unwrap_or_else(|_| "unknown".into());
+        Ok::<String, deadpool_postgres::PoolError>(ver)
+    }).await {
+        Ok(Ok(ver)) => {
+            let hint = pooled_endpoint_hint(&url, &parts.port);
+            let ro_suffix = if read_only { " (read-only)" } else { "" };
+            state.connections.lock().await.insert(
+                connection_id.clone(),
+                ActiveConnection { pool: Arc::new(pool), read_only, url: url.clone() },
+            );
+            Ok(format!("Connected to PostgreSQL: {}{}{}", ver, ro_suffix, hint))
         }
         Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
         Err(_) => Err("Connection timed out (5s)".into()),
@@ -111,57 +128,138 @@ pub async fn is_connected(connection_id: String, state: tauri::State<'_, AppStat
     Ok(state.connections.lock().await.contains_key(&connection_id))
 }
 
-fn pg_client(guard: &HashMap<String, Arc<PgClient>>, id: &str) -> Result<Arc<PgClient>, String> {
-    guard.get(id).cloned().ok_or_else(|| "Not connected".into())
+#[tauri::command]
+pub async fn get_connection_info(connection_id: String, state: tauri::State<'_, AppState>) -> Result<ConnectionInfo, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
+    pg::pg_connection_info(&client, &handle.url, handle.read_only).await
+}
+
+/// A snapshot of an active connection's pool + flags, taken *without* holding
+/// the connections mutex across any await. Holding the guard while a query
+/// runs serializes every connection: a slow query on one connection would
+/// block all others despite the per-pool `max_size(8)`.
+struct ConnectionHandle {
+    pool: Arc<deadpool_postgres::Pool>,
+    read_only: bool,
+    url: String,
+}
+
+async fn get_handle(state: &AppState, id: &str) -> Result<ConnectionHandle, String> {
+    let guard = state.connections.lock().await;
+    let ac = guard.get(id).ok_or_else(|| "Not connected".to_string())?;
+    Ok(ConnectionHandle {
+        pool: ac.pool.clone(),
+        read_only: ac.read_only,
+        url: ac.url.clone(),
+    })
+}
+
+async fn get_client(handle: &ConnectionHandle) -> Result<deadpool_postgres::Object, String> {
+    handle.pool.get().await.map_err(|e| format!("No connection available: {}", e))
+}
+
+fn pooled_endpoint_hint(url: &str, port: &str) -> &'static str {
+    let provider = detect_provider(url);
+    let lower = url.to_lowercase();
+    let supabase_pooled = provider == "supabase" && (lower.contains("pooler.supabase") || port == "6543");
+    let neon_pooled = provider == "neon" && lower.contains("pooler");
+    if supabase_pooled || neon_pooled {
+        "\nNote: pooled endpoint detected — session-level features (EXPLAIN, SET) may be limited."
+    } else {
+        ""
+    }
 }
 
 #[tauri::command]
 pub async fn get_schemas(connection_id: String, state: tauri::State<'_, AppState>) -> Result<Vec<SchemaInfo>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_schemas(&client).await
 }
 
 #[tauri::command]
 pub async fn get_tables(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_tables(&client, &schema).await
 }
 
 #[tauri::command]
 pub async fn get_columns(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<ColumnInfo>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_columns(&client, &schema, &table).await
 }
 
 #[tauri::command]
 pub async fn get_indexes(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<IndexInfo>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_indexes(&client, &schema, &table).await
 }
 
 #[tauri::command]
 pub async fn get_constraints(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<ConstraintInfo>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_constraints(&client, &schema, &table).await
 }
 
 #[tauri::command]
 pub async fn get_schema_relationships(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<RelationshipInfo>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_schema_relationships(&client, &schema).await
 }
 
 #[tauri::command]
 pub async fn get_relationships(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<RelationshipInfo>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_relationships(&client, &schema, &table).await
+}
+
+#[tauri::command]
+pub async fn get_views(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<ViewInfo>, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
+    pg::pg_get_views(&client, &schema).await
+}
+
+#[tauri::command]
+pub async fn get_triggers(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<TriggerInfo>, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
+    pg::pg_get_triggers(&client, &schema, &table).await
+}
+
+#[tauri::command]
+pub async fn get_functions(connection_id: String, schema: String, state: tauri::State<'_, AppState>) -> Result<Vec<FunctionInfo>, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
+    pg::pg_get_functions(&client, &schema).await
+}
+
+#[tauri::command]
+pub async fn get_rls_policies(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<Vec<RlsPolicyInfo>, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
+    pg::pg_get_rls_policies(&client, &schema, &table).await
+}
+
+#[tauri::command]
+pub async fn get_roles(connection_id: String, state: tauri::State<'_, AppState>) -> Result<Vec<RoleInfo>, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
+    pg::pg_get_roles(&client).await
+}
+
+#[tauri::command]
+pub async fn table_rls_status(connection_id: String, schema: String, table: String, state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
+    pg::pg_table_rls_status(&client, &schema, &table).await
 }
 
 #[tauri::command]
@@ -175,23 +273,87 @@ pub async fn get_table_data(
     sort_direction: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<TableDataResult, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_table_data(&client, &schema, &table, page, page_size, sort_column.as_deref(), sort_direction.as_deref()).await
 }
 
 #[tauri::command]
-pub async fn execute_query(connection_id: String, query: String, state: tauri::State<'_, AppState>) -> Result<QueryResult, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+pub async fn execute_query(connection_id: String, query: String, options: QueryOptions, state: tauri::State<'_, AppState>) -> Result<QueryResult, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    if handle.read_only && (pg::is_destructive(&query) || !pg::is_select_query(&query)) {
+        return Err("Connection is read-only".into());
+    }
+    if pg::is_destructive(&query) && !options.confirm_destructive {
+        return Err("DESTRUCTIVE_QUERY_REQUIRES_CONFIRMATION".into());
+    }
+    let client = get_client(&handle).await?;
     pg::pg_execute_query(&client, &query).await
 }
 
 #[tauri::command]
+pub async fn execute_query_params(connection_id: String, query: String, params: Vec<serde_json::Value>, options: QueryOptions, state: tauri::State<'_, AppState>) -> Result<QueryResult, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    if handle.read_only && (pg::is_destructive(&query) || !pg::is_select_query(&query)) {
+        return Err("Connection is read-only".into());
+    }
+    if pg::is_destructive(&query) && !options.confirm_destructive {
+        return Err("DESTRUCTIVE_QUERY_REQUIRES_CONFIRMATION".into());
+    }
+    let client = get_client(&handle).await?;
+    pg::pg_execute_query_params(&client, &query, &params).await
+}
+
+#[tauri::command]
+pub async fn mutate_rows(connection_id: String, statements: Vec<RowMutationStatement>, state: tauri::State<'_, AppState>) -> Result<Vec<QueryResult>, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    if handle.read_only {
+        return Err("Connection is read-only".into());
+    }
+    // Grid edits are structured UPDATE/DELETE/INSERT statements (none DDL), so
+    // any DDL statement here is a hostile/accidental schema change — reject it.
+    for stmt in &statements {
+        if pg::is_ddl(&stmt.query) {
+            return Err("DESTRUCTIVE_QUERY_REQUIRES_CONFIRMATION".into());
+        }
+    }
+    let mut client = get_client(&handle).await?;
+    pg::pg_mutate(&mut client, &statements).await
+}
+
+#[tauri::command]
+pub async fn explain_query(connection_id: String, query: String, analyze: bool, state: tauri::State<'_, AppState>) -> Result<ExplainResult, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    if handle.read_only && !pg::explain_safe_to_run(&query) {
+        return Err("Connection is read-only".into());
+    }
+    let client = get_client(&handle).await?;
+    pg::pg_explain(&client, &query, analyze).await
+}
+
+#[tauri::command]
 pub async fn get_enum_values(connection_id: String, type_name: String, state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
-    let guard = state.connections.lock().await;
-    let client = pg_client(&guard, &connection_id)?;
+    let handle = get_handle(&state, &connection_id).await?;
+    let client = get_client(&handle).await?;
     pg::pg_get_enum_values(&client, &type_name).await
+}
+
+#[tauri::command]
+pub async fn list_neon_branches(connection_id: String, api_key: String, state: tauri::State<'_, AppState>) -> Result<Vec<NeonBranch>, String> {
+    let handle = get_handle(&state, &connection_id).await?;
+    crate::neon::list_neon_branches(&api_key, &handle.url).await
+}
+
+#[tauri::command]
+pub async fn save_neon_api_key(connection_id: String, api_key: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut config = state.load_config();
+    if let Some(entry) = config.iter_mut().find(|c| c.id == connection_id) {
+        entry.neon_api_key = Some(api_key);
+        state.save_config(&config);
+        Ok(())
+    } else {
+        Err("Connection not found".into())
+    }
 }
 
 #[tauri::command]

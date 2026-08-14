@@ -1,15 +1,6 @@
-export interface ConnectionConfig {
-  id: string;
-  name: string;
-  provider: string;
-  connectionString?: string;
-  host?: string;
-  port?: number;
-  database?: string;
-  user?: string;
-  password?: string;
-  ssl?: boolean;
-}
+import type { RowMutationStatement } from "@/lib/ipc-client";
+
+export type { RowMutationStatement };
 
 export interface ColumnMeta {
   name: string;
@@ -30,11 +21,58 @@ export interface TableInfo {
   schemaName: string;
   tableType: string;
   rowCount?: number;
+  hasRls?: boolean;
 }
 
 export interface SchemaInfo {
   schemaName: string;
   tablesCount?: number;
+}
+
+export interface ViewInfo {
+  viewName: string;
+  definition: string;
+}
+
+export interface TriggerInfo {
+  triggerName: string;
+  eventManipulation: string;
+  actionTiming: string;
+  actionStatement: string;
+  enabled: boolean;
+}
+
+export interface FunctionInfo {
+  functionName: string;
+  arguments: string;
+  returnType: string;
+  language: string;
+  volatility: string;
+  securityDefiner: boolean;
+}
+
+export interface RlsPolicyInfo {
+  policyName: string;
+  command: string;
+  roles: string[];
+  usingExpression?: string | null;
+  checkExpression?: string | null;
+}
+
+export interface RoleInfo {
+  roleName: string;
+  superuser: boolean;
+  createdb: boolean;
+  createrole: boolean;
+  login: boolean;
+  connectionLimit: number;
+  memberOf: string[];
+}
+
+export interface TableDataResult {
+  columns: ColumnMeta[];
+  rows: Record<string, unknown>[];
+  totalCount: number;
 }
 
 export interface ColumnInfo {

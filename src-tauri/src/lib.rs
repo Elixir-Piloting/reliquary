@@ -1,5 +1,6 @@
 mod types;
 mod pg;
+mod neon;
 mod commands;
 
 use std::collections::HashMap;
@@ -7,6 +8,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 pub use types::*;
+pub use pg::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -31,6 +33,7 @@ pub fn run() {
             commands::connect,
             commands::disconnect,
             commands::is_connected,
+            commands::get_connection_info,
             commands::get_schemas,
             commands::get_tables,
             commands::get_columns,
@@ -38,13 +41,24 @@ pub fn run() {
             commands::get_constraints,
             commands::get_relationships,
             commands::get_schema_relationships,
+            commands::get_views,
+            commands::get_triggers,
+            commands::get_functions,
+            commands::get_rls_policies,
+            commands::get_roles,
+            commands::table_rls_status,
             commands::get_table_data,
             commands::execute_query,
+            commands::execute_query_params,
+            commands::mutate_rows,
+            commands::explain_query,
             commands::get_enum_values,
             commands::detect_local_servers,
             commands::list_local_databases,
             commands::create_local_database,
             commands::drop_local_database,
+            commands::list_neon_branches,
+            commands::save_neon_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

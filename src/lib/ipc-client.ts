@@ -7,69 +7,128 @@ export interface Connection {
   provider?: string;
   color?: string;
   createdAt?: string;
+  sslmode?: string;
+  readOnly?: boolean;
+  neonApiKey?: string;
 }
 
 export interface SchemaInfo {
-  schema_name: string;
-  tables_count?: number;
+  schemaName: string;
+  tablesCount?: number;
 }
 
 export interface TableInfo {
-  table_name: string;
-  schema_name: string;
-  type: string;
-  row_count?: number;
+  tableName: string;
+  schemaName: string;
+  tableType: string;
+  rowCount?: number;
+  hasRls?: boolean;
+}
+
+export interface ViewInfo {
+  viewName: string;
+  definition: string;
+}
+
+export interface TriggerInfo {
+  triggerName: string;
+  eventManipulation: string;
+  actionTiming: string;
+  actionStatement: string;
+  enabled: boolean;
+}
+
+export interface FunctionInfo {
+  functionName: string;
+  arguments: string;
+  returnType: string;
+  language: string;
+  volatility: string;
+  securityDefiner: boolean;
+}
+
+export interface RlsPolicyInfo {
+  policyName: string;
+  command: string;
+  roles: string[];
+  usingExpression?: string | null;
+  checkExpression?: string | null;
+}
+
+export interface RoleInfo {
+  roleName: string;
+  superuser: boolean;
+  createdb: boolean;
+  createrole: boolean;
+  login: boolean;
+  connectionLimit: number;
+  memberOf: string[];
 }
 
 export interface ColumnInfo {
-  column_name: string;
-  data_type: string;
-  is_nullable: boolean;
-  is_primary_key: boolean;
-  default_value: string | null;
-  max_length?: number | null;
+  columnName: string;
+  dataType: string;
+  isNullable: boolean;
+  isPrimaryKey: boolean;
+  defaultValue: string | null;
+  maxLength?: number | null;
 }
 
 export interface IndexInfo {
-  index_name: string;
-  column_name: string;
-  is_unique: boolean;
-  is_primary: boolean;
-  index_type: string;
+  indexName: string;
+  columnName: string;
+  isUnique: boolean;
+  isPrimary: boolean;
+  indexType: string;
 }
 
 export interface ConstraintInfo {
-  constraint_name: string;
-  constraint_type: string;
-  column_name: string;
-  foreign_table_schema: string | null;
-  foreign_table_name: string | null;
-  foreign_column_name: string | null;
+  constraintName: string;
+  constraintType: string;
+  columnName: string;
+  foreignTableSchema: string | null;
+  foreignTableName: string | null;
+  foreignColumnName: string | null;
 }
 
 export interface RelationshipInfo {
-  constraint_name: string;
-  source_schema: string;
-  source_table: string;
-  source_column: string;
-  target_schema: string;
-  target_table: string;
-  target_column: string;
+  constraintName: string;
+  sourceSchema: string;
+  sourceTable: string;
+  sourceColumn: string;
+  targetSchema: string;
+  targetTable: string;
+  targetColumn: string;
 }
 
 export interface TableDataResult {
-  columns: Array<{ name: string; data_type: string }>;
+  columns: Array<{ name: string; dataType: string }>;
   rows: Record<string, unknown>[];
-  total_count: number;
+  totalCount: number;
+}
+
+export interface QueryOptions {
+  confirmDestructive: boolean;
+  readOnly: boolean;
+}
+
+export interface RowMutationStatement {
+  query: string;
+  params: unknown[];
 }
 
 export interface QueryResult {
-  columns: Array<{ name: string; data_type: string }>;
+  columns: Array<{ name: string; dataType: string }>;
   rows: Record<string, unknown>[];
-  row_count: number;
-  affected_rows?: number;
-  is_select: boolean;
-  execution_time_ms: number;
+  rowCount: number;
+  affectedRows?: number;
+  isSelect: boolean;
+  executionTimeMs: number;
+}
+
+export interface ExplainResult {
+  plan: unknown;
+  executionTimeMs: number;
 }
 
 export interface LocalPgServer {
@@ -90,7 +149,31 @@ export interface LocalPgDatabase {
 export interface TestConnectionResult {
   success: boolean;
   error?: string;
-  server_version?: string;
+  serverVersion?: string;
+}
+
+export interface ConnectionInfo {
+  provider: string;
+  host: string;
+  port: string;
+  database: string;
+  user: string;
+  serverVersion: string;
+  sslmode: string;
+  isSupabase: boolean;
+  isNeon: boolean;
+  supabaseSchemas: string[];
+  readOnly: boolean;
+  pooledEndpoint: boolean;
+}
+
+export interface NeonBranch {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  primary: boolean;
+  connectionUri?: string;
 }
 
 function getConnectionId(): string {
@@ -104,11 +187,11 @@ const API = {
   async listConnections(): Promise<Connection[]> {
     return invoke("list_connections");
   },
-  async addConnection(config: { name: string; url: string }): Promise<Connection> {
-    return invoke("add_connection", { name: config.name, url: config.url });
+  async addConnection(config: { name: string; url: string; readOnly?: boolean }): Promise<Connection> {
+    return invoke("add_connection", { name: config.name, url: config.url, readOnly: config.readOnly ?? false });
   },
-  async updateConnection(id: string, updates: { name?: string; url?: string }): Promise<void> {
-    return invoke("update_connection", { id, name: updates.name, url: updates.url });
+  async updateConnection(id: string, updates: { name?: string; url?: string; readOnly?: boolean }): Promise<void> {
+    return invoke("update_connection", { id, name: updates.name, url: updates.url, readOnly: updates.readOnly });
   },
   async deleteConnection(id: string): Promise<void> {
     return invoke("delete_connection", { id });
@@ -118,14 +201,17 @@ const API = {
   },
 
   // Connection lifecycle
-  async connect(connectionId: string): Promise<void> {
-    return invoke("connect", { connectionId });
+  async connect(connectionId: string, url: string, readOnly: boolean): Promise<void> {
+    return invoke("connect", { connectionId, url, readOnly });
   },
   async disconnect(connectionId: string): Promise<void> {
     return invoke("disconnect", { connectionId });
   },
   async isConnected(connectionId: string): Promise<boolean> {
     return invoke("is_connected", { connectionId });
+  },
+  async getConnectionInfo(connectionId: string): Promise<ConnectionInfo> {
+    return invoke("get_connection_info", { connectionId });
   },
 
   // Schema introspection
@@ -147,6 +233,24 @@ const API = {
   async getRelationships(connectionId: string, schema: string, table: string): Promise<RelationshipInfo[]> {
     return invoke("get_relationships", { connectionId, schema, table });
   },
+  async getViews(connectionId: string, schema: string): Promise<ViewInfo[]> {
+    return invoke("get_views", { connectionId, schema });
+  },
+  async getTriggers(connectionId: string, schema: string, table: string): Promise<TriggerInfo[]> {
+    return invoke("get_triggers", { connectionId, schema, table });
+  },
+  async getFunctions(connectionId: string, schema: string): Promise<FunctionInfo[]> {
+    return invoke("get_functions", { connectionId, schema });
+  },
+  async getRlsPolicies(connectionId: string, schema: string, table: string): Promise<RlsPolicyInfo[]> {
+    return invoke("get_rls_policies", { connectionId, schema, table });
+  },
+  async getRoles(connectionId: string): Promise<RoleInfo[]> {
+    return invoke("get_roles", { connectionId });
+  },
+  async tableRlsStatus(connectionId: string, schema: string, table: string): Promise<boolean> {
+    return invoke("table_rls_status", { connectionId, schema, table });
+  },
 
   // Table data
   async getTableData(connectionId: string, schema: string, table: string, page: number, pageSize: number, sortColumn?: string, sortDirection?: string): Promise<TableDataResult> {
@@ -154,8 +258,45 @@ const API = {
   },
 
   // Queries
-  async executeQuery(connectionId: string, query: string): Promise<QueryResult> {
-    return invoke("execute_query", { connectionId, query });
+  async executeQuery(connectionId: string, query: string, options?: Partial<QueryOptions>): Promise<QueryResult> {
+    return invoke("execute_query", {
+      connectionId,
+      query,
+      options: {
+        confirmDestructive: false,
+        readOnly: false,
+        ...options,
+      },
+    });
+  },
+
+  async executeQueryParams(connectionId: string, query: string, params: unknown[], options?: Partial<QueryOptions>): Promise<QueryResult> {
+    return invoke("execute_query_params", {
+      connectionId,
+      query,
+      params,
+      options: {
+        confirmDestructive: false,
+        readOnly: false,
+        ...options,
+      },
+    });
+  },
+
+  async mutateRows(connectionId: string, statements: RowMutationStatement[]): Promise<QueryResult[]> {
+    return invoke("mutate_rows", { connectionId, statements });
+  },
+
+  async explainQuery(connectionId: string, query: string, analyze: boolean): Promise<ExplainResult> {
+    return invoke("explain_query", { connectionId, query, analyze });
+  },
+
+  // Neon branches
+  async listNeonBranches(connectionId: string, apiKey: string): Promise<NeonBranch[]> {
+    return invoke("list_neon_branches", { connectionId, apiKey });
+  },
+  async saveNeonApiKey(connectionId: string, apiKey: string): Promise<void> {
+    return invoke("save_neon_api_key", { connectionId, apiKey });
   },
 
   // Local PostgreSQL

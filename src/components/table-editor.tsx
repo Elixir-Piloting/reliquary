@@ -79,7 +79,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     if (columns.some(c => !c.name.trim())) { toast.error("All columns need a name"); return; }
     setSaving(true);
     try {
-      await invoke("execute_query", { connectionId, query: buildCreateSQL() });
+      await invoke("execute_query", { connectionId, query: buildCreateSQL(), options: { confirmDestructive: true, readOnly: false } });
       toast.success(`Table "${tableName}" created`);
       onCreated?.(schema, tableName);
     } catch (e: any) {
@@ -91,7 +91,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const runAlter = async (sql: string, okMsg: string) => {
     setSaving(true);
     try {
-      await invoke("execute_query", { connectionId, query: sql });
+      await invoke("execute_query", { connectionId, query: sql, options: { confirmDestructive: true, readOnly: false } });
       toast.success(okMsg);
       await reload();
     } catch (e: any) {

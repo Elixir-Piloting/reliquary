@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "vitest run",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "env -i PATH=\"$PATH\" HOME=\"$HOME\" DISPLAY=\"$DISPLAY\" DBUS_SESSION_BUS_ADDRESS=\"$DBUS_SESSION_BUS_ADDRESS\" XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\" pnpm tauri dev"
@@ -41,11 +42,13 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
