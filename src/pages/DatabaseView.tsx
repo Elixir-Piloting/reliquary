@@ -17,7 +17,7 @@ import API from "@/lib/ipc-client";
 import type { QueryResult, ColumnInfo, ColumnMeta, TableFilter } from "@/lib/db/types";
 import { generateTabId, type WorkspaceTab } from "@/lib/workspace-tabs";
 import { clearQueryTransient } from "@/components/query-pane";
-import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check } from "lucide-react";
+import { RefreshCw, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 
@@ -347,7 +347,7 @@ export default function DatabaseView() {
             <div id="table-actions-slot" />
             <div className={cn("relative flex items-center gap-1", autoRefreshMs !== null && "rounded-md")}>
               <Button variant="ghost" size="sm" className="h-7 px-1.5 gap-1 text-muted-foreground hover:text-foreground" disabled={loading} onClick={() => fetchData()}>
-                {loading || refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin-burst" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                <RefreshCw className={cn("h-3.5 w-3.5", (loading || refreshing) && "animate-spin-burst")} />
                 <span className="text-xs">Refresh</span>
               </Button>
               {autoRefreshMs !== null && (

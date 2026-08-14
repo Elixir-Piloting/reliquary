@@ -1,10 +1,12 @@
 "use client";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Loader2, Download } from "lucide-react";
+import { Loader2, Download, RotateCcw } from "lucide-react";
 import type { ColumnInfo, TableNode, RelationshipEdge } from "./types";
 import { TABLE_HEADER_HEIGHT, COLUMN_HEIGHT, TABLE_MIN_WIDTH, TABLE_PADDING } from "./types";
 import type { SchemaInfo, ColumnInfo as RustColumnInfo, RelationshipInfo } from "@/lib/db/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { LockToggle } from "./lock-toggle";
 
 function isDarkMode() {
   if (typeof window === "undefined") return false;
@@ -129,34 +131,41 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
       }));
 
       const tableNodes: TableNode[] = [];
-      for (let i = 0; i < tablesData.length; i++) {
-        const t = tablesData[i];
+      // Fetch all tables' columns in parallel (per-table round trips were the
+      // main load bottleneck — one await per table made large schemas crawl).
+      const columnFetches = tablesData.map(async t => {
         try {
           const cols = await invoke<RustColumnInfo[]>("get_columns", {
             connectionId, schema: currentSchema, table: t.tableName,
           });
-          const columns: ColumnInfo[] = cols.map(c => ({
-            name: c.columnName,
-            type: c.dataType,
-            isPrimaryKey: c.isPrimaryKey,
-            isForeignKey: fkColumnSet.has(`${currentSchema}.${t.tableName}.${c.columnName}`),
-            isNullable: c.isNullable,
-          }));
-          const h = TABLE_HEADER_HEIGHT + columns.length * COLUMN_HEIGHT + TABLE_PADDING;
-          const maxNameLen = Math.max(...columns.map(c => c.name.length), 10);
-          const maxTypeLen = Math.max(...columns.map(c => c.type.length), 15);
-          const w = Math.min(Math.max(TABLE_MIN_WIDTH, Math.max(maxNameLen * 7, maxTypeLen * 6) + 60), 350);
-          tableNodes.push({
-            id: `${currentSchema}.${t.tableName}`,
-            schema: currentSchema,
-            name: t.tableName,
-            columns,
-            x: 0,
-            y: 0,
-            width: w,
-            height: h,
-          });
-        } catch { }
+          return { t, cols };
+        } catch {
+          return { t, cols: [] as RustColumnInfo[] };
+        }
+      });
+      const columnResults = await Promise.all(columnFetches);
+      for (const { t, cols } of columnResults) {
+        const columns: ColumnInfo[] = cols.map(c => ({
+          name: c.columnName,
+          type: c.dataType,
+          isPrimaryKey: c.isPrimaryKey,
+          isForeignKey: fkColumnSet.has(`${currentSchema}.${t.tableName}.${c.columnName}`),
+          isNullable: c.isNullable,
+        }));
+        const h = TABLE_HEADER_HEIGHT + columns.length * COLUMN_HEIGHT + TABLE_PADDING;
+        const maxNameLen = Math.max(...columns.map(c => c.name.length), 10);
+        const maxTypeLen = Math.max(...columns.map(c => c.type.length), 15);
+        const w = Math.min(Math.max(TABLE_MIN_WIDTH, Math.max(maxNameLen * 7, maxTypeLen * 6) + 60), 350);
+        tableNodes.push({
+          id: `${currentSchema}.${t.tableName}`,
+          schema: currentSchema,
+          name: t.tableName,
+          columns,
+          x: 0,
+          y: 0,
+          width: w,
+          height: h,
+        });
       }
 
       const layout = autoLayout(tableNodes, relEdges);
@@ -418,88 +427,107 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
   }, [tables]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="h-10 border-b border-border flex items-center justify-between px-4 shrink-0 bg-muted/10">
-        <div className="flex items-center gap-2">
-          <select value={currentSchema} onChange={e => setCurrentSchema(e.target.value)}
-            className="h-7 text-xs rounded border border-input bg-background px-2">
-            {schemas.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <button onClick={loadSchema} disabled={loading}
-            className="h-7 px-2 text-xs rounded border border-input bg-background hover:bg-accent">
-            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Refresh"}
-          </button>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <button onClick={exportPNG} className="flex items-center gap-1 hover:text-foreground">
-            <Download className="h-3.5 w-3.5" /> Export PNG
-          </button>
-          <span>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => {
-            setZoom(0.8);
-            setTables(prev => {
-              const layout = autoLayout(prev, relationships);
-              return prev.map(t => {
-                const p = layout.find(l => l.id === t.id);
-                return p ? { ...t, x: p.x, y: p.y } : t;
-              });
-            });
-          }} className="hover:text-foreground">Reset</button>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={isLocked} onChange={e => setIsLocked(e.target.checked)} className="h-3 w-3" />
-            Lock
-          </label>
-        </div>
-      </div>
-      <div className="flex-1 relative overflow-hidden">
-        {loading ? (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading schema...
-          </div>
-        ) : tables.length === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
-            No tables found
-          </div>
-        ) : null}
-        <canvas
-          ref={canvasRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onWheel={handleWheel}
-          className={`absolute inset-0 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
-        />
-        {tables.length > 0 && (
-          <div className="absolute bottom-4 right-4 bg-background/95 backdrop-blur-sm border border-border rounded-lg p-2">
-            <div className="text-xs font-medium mb-1.5 text-muted-foreground">Overview</div>
-            <div
-              className="relative border border-border rounded"
-              style={{ width: 180, height: 135, backgroundColor: dark ? "hsl(240, 4%, 14%)" : "hsl(0, 0%, 95%)" }}
-            >
-              <svg width="180" height="135" className="absolute inset-0" style={{ overflow: "visible" }}>
-                {tables.map(table => {
-                  const pad = 200;
-                  const scaleX = 180 / (bounds.maxX - bounds.minX + pad);
-                  const scaleY = 135 / (bounds.maxY - bounds.minY + pad);
-                  return (
-                    <rect
-                      key={table.id}
-                      x={(table.x - bounds.minX) * scaleX}
-                      y={(table.y - bounds.minY) * scaleY}
-                      width={Math.max(2, table.width * scaleX)}
-                      height={Math.max(2, table.height * scaleY)}
-                      fill="hsla(212, 100%, 55%, 0.3)"
-                      stroke="hsl(212, 100%, 55%)"
-                      strokeWidth={1}
-                    />
-                  );
-                })}
-              </svg>
+    <div className="relative h-full w-full overflow-hidden">
+      {loading && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/60 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative h-10 w-10">
+              <div className="absolute inset-0 rounded-full border-2 border-primary/30" />
+              <Loader2 className="absolute inset-0 m-auto h-5 w-5 animate-spin text-primary" />
             </div>
+            <p className="text-sm text-muted-foreground">Loading schema…</p>
           </div>
-        )}
+        </div>
+      )}
+      {!loading && tables.length === 0 && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center text-sm text-muted-foreground">
+          No tables found
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+        className={`absolute inset-0 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+      />
+
+      {/* Floating top-left toolbar: schema + refresh */}
+      {schemas.length > 0 && (
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-1 rounded-lg border border-border bg-background/90 backdrop-blur-sm px-1.5 py-1 shadow-sm">
+          <Select value={currentSchema} onValueChange={setCurrentSchema}>
+            <SelectTrigger className="h-7 w-36 text-xs gap-1.5">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {schemas.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <button onClick={loadSchema} disabled={loading}
+            className="flex h-7 items-center gap-1 rounded px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            title="Refresh schema">
+            <Loader2 className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+        </div>
+      )}
+
+      {/* Floating top-right toolbar: export / reset / lock */}
+      <div className="absolute top-3 right-3 z-20 flex items-center gap-0.5 rounded-lg border border-border bg-background/90 backdrop-blur-sm px-1.5 py-1 shadow-sm">
+        <button onClick={exportPNG} className="flex h-7 items-center gap-1 rounded px-2 text-xs text-muted-foreground transition-colors hover:text-foreground" title="Export PNG">
+          <Download className="h-3.5 w-3.5" />
+          <span className="hidden md:inline">Export PNG</span>
+        </button>
+        <span className="px-1 text-xs text-muted-foreground tabular-nums">{Math.round(zoom * 100)}%</span>
+        <button onClick={() => {
+          setZoom(0.8);
+          setTables(prev => {
+            const layout = autoLayout(prev, relationships);
+            return prev.map(t => {
+              const p = layout.find(l => l.id === t.id);
+              return p ? { ...t, x: p.x, y: p.y } : t;
+            });
+          });
+        }} className="flex h-7 items-center gap-1 rounded px-2 text-xs text-muted-foreground transition-colors hover:text-foreground" title="Reset layout">
+          <RotateCcw className="h-3.5 w-3.5" />
+          <span className="hidden md:inline">Reset</span>
+        </button>
+        <div className="mx-0.5 h-4 w-px bg-border" />
+        <LockToggle locked={isLocked} onToggle={setIsLocked} className="h-7 w-7 justify-center" />
       </div>
+
+      {/* Overview minimap */}
+      {tables.length > 0 && (
+        <div className="absolute bottom-4 right-4 z-20 bg-background/95 backdrop-blur-sm border border-border rounded-lg p-2">
+          <div className="text-xs font-medium mb-1.5 text-muted-foreground">Overview</div>
+          <div
+            className="relative border border-border rounded"
+            style={{ width: 180, height: 135, backgroundColor: dark ? "hsl(240, 4%, 14%)" : "hsl(0, 0%, 95%)" }}
+          >
+            <svg width="180" height="135" className="absolute inset-0" style={{ overflow: "visible" }}>
+              {tables.map(table => {
+                const pad = 200;
+                const scaleX = 180 / (bounds.maxX - bounds.minX + pad);
+                const scaleY = 135 / (bounds.maxY - bounds.minY + pad);
+                return (
+                  <rect
+                    key={table.id}
+                    x={(table.x - bounds.minX) * scaleX}
+                    y={(table.y - bounds.minY) * scaleY}
+                    width={Math.max(2, table.width * scaleX)}
+                    height={Math.max(2, table.height * scaleY)}
+                    fill="hsla(212, 100%, 55%, 0.3)"
+                    stroke="hsl(212, 100%, 55%)"
+                    strokeWidth={1}
+                  />
+                );
+              })}
+            </svg>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
