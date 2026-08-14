@@ -699,35 +699,35 @@ fn build_filter_where(filters: &[TableFilter]) -> (String, Vec<Box<dyn ToSql + S
         let value = f.value.clone().unwrap_or_default();
         match f.operator.as_str() {
             "eq" => {
-                params.push(Box::new(value));
+                params.push(Box::new(SqlText(value)));
                 clauses.push(format!("{} = ${}", col, params.len()));
             }
             "neq" => {
-                params.push(Box::new(value));
+                params.push(Box::new(SqlText(value)));
                 clauses.push(format!("{} <> ${}", col, params.len()));
             }
             "contains" => {
-                params.push(Box::new(format!("%{}%", value)));
+                params.push(Box::new(SqlText(format!("%{}%", value))));
                 clauses.push(format!("{} ILIKE ${}", col, params.len()));
             }
             "not_contains" => {
-                params.push(Box::new(format!("%{}%", value)));
+                params.push(Box::new(SqlText(format!("%{}%", value))));
                 clauses.push(format!("{} NOT ILIKE ${}", col, params.len()));
             }
             "like" => {
-                params.push(Box::new(value));
+                params.push(Box::new(SqlText(value)));
                 clauses.push(format!("{} LIKE ${}", col, params.len()));
             }
             "not_like" => {
-                params.push(Box::new(value));
+                params.push(Box::new(SqlText(value)));
                 clauses.push(format!("{} NOT LIKE ${}", col, params.len()));
             }
             "starts_with" => {
-                params.push(Box::new(format!("{}%", value)));
+                params.push(Box::new(SqlText(format!("{}%", value))));
                 clauses.push(format!("{} LIKE ${}", col, params.len()));
             }
             "ends_with" => {
-                params.push(Box::new(format!("%{}", value)));
+                params.push(Box::new(SqlText(format!("%{}", value))));
                 clauses.push(format!("{} LIKE ${}", col, params.len()));
             }
             "is_null" => {
