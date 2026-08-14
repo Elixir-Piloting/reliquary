@@ -186,10 +186,11 @@ export function ResultsViewer({
       return;
     }
     const staged = stagedForRow(editor.row || {});
-    // Re-mount the panel whenever this row's staged state changes so the
+    // Re-mount the panel whenever this row's displayed content changes so the
     // inspector always reflects the latest inline edits (captured sidebar
     // elements keep stale internal state otherwise).
-    const panelKey = editor.row ? JSON.stringify([...staged.entries()].sort()) : "none";
+    const mergedRow = editor.row ? applyStagedToRow(editor.row) : null;
+    const panelKey = mergedRow ? JSON.stringify([...staged.entries()].sort()) + "|" + JSON.stringify(Object.keys(mergedRow).sort().map(k => String(mergedRow[k]))) : "none";
     rightSidebar.setContent(
       <RowEditorPanel
         key={panelKey}
@@ -202,7 +203,7 @@ export function ResultsViewer({
           columnName: c.name, dataType: c.dataType, isNullable: true, isPrimaryKey: pkColumns?.includes(c.name) || false, defaultValue: null,
         })))}
         pkColumns={pkColumns || []}
-        row={editor.row ? applyStagedToRow(editor.row) : null}
+        row={mergedRow}
         stagedValues={Object.fromEntries(staged)}
         onClose={() => { rightSidebar.closeRight(); setEditor(null); }}
         onStageEdit={handleStageRowEdits}
@@ -304,9 +305,10 @@ export function ResultsViewer({
 
   const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
-    // Keep the raw DB row; the sidebar effect re-derives staged values from the
-    // live pendingChanges so inline edits stay in sync.
-    setEditor({ mode: 'edit', row });
+    // Bake the latest staged (uncommitted) values into the row so the inspector
+    // always opens with what's currently on screen — never stale DB values.
+    rightSidebar.setOpen(true);
+    setEditor({ mode: 'edit', row: applyStagedToRow(row) });
   };
 
   /** Stage a delete for the row shown in the sidebar editor, then close it. */
