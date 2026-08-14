@@ -149,7 +149,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         {!sidebarCollapsed && (
           <div
             onPointerDown={onResizeStart}
-            className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize group-hover:bg-accent"
+            className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize"
             style={{ zIndex: 20 }}
             title="Drag to resize"
           />
