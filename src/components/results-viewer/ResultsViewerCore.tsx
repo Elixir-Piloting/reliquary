@@ -365,6 +365,10 @@ export function ResultsViewer({
       newValue: newVal,
     };
     setPendingChanges(prev => [...prev, change]);
+    // Keep the inspector in sync with inline edits: point it at the row that
+    // was just edited so the sidebar reflects the new value immediately.
+    setEditor({ mode: 'edit', row: { ...row, [editingCell.col]: newVal } });
+    rightSidebar.setOpen(true);
     setEditingCell(null);
   };
 
