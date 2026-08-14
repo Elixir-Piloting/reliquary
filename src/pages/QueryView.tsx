@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { MainLayout } from "@/components/main-layout";
 import { DatabaseNavbar } from "@/components/database-navbar";
 import { SQLEditor } from "@/components/sql-editor";
@@ -24,6 +24,7 @@ function generateTabId() { return "q-" + Date.now(); }
 
 export default function QueryView() {
   const { connection: connectionId } = useParams<{ connection: string }>();
+  const [searchParams] = useSearchParams();
   const [queryTabs, setQueryTabs] = useState<QueryTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -61,6 +62,21 @@ export default function QueryView() {
       setActiveTabId(id);
     }
   }, [connectionId]);
+
+  // "Open in SQL editor" from the schema sidebar: open a tab prefilled with a
+  // SELECT for the requested table (?table=schema.table).
+  useEffect(() => {
+    const tableParam = searchParams.get("table");
+    if (!tableParam || !connectionId) return;
+    const [schema, table] = tableParam.split(".");
+    if (!schema || !table) return;
+    const id = generateTabId();
+    const query = `SELECT * FROM "${schema}"."${table}" LIMIT 100;`;
+    setQueryTabs(prev => [{ id, label: `${schema}.${table}`, query }, ...prev]);
+    setActiveTabId(id);
+    window.history.replaceState({}, "", `/db/${connectionId}/query`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get("table")]);
 
   const currentQuery = queryTabs.find(t => t.id === activeTabId)?.query || "";
 

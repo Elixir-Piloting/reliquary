@@ -144,6 +144,15 @@ export default function DatabaseView() {
   }, [searchParams.get("newTable")]);
 
   useEffect(() => {
+    const editTableParam = searchParams.get("editTable");
+    if (!editTableParam || !connectionId) return;
+    const [schema, table] = editTableParam.split(".");
+    if (schema && table) openEditTab(schema, table);
+    navigate(`/db/${connectionId}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get("editTable")]);
+
+  useEffect(() => {
     if (!connectionId || !activeTab) return;
     if (columnsMeta[activeTab.id]) return;
     invoke<ColumnInfo[]>("get_columns", { connectionId, schema: activeTab.schema, table: activeTab.table })
