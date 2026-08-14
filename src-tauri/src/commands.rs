@@ -420,7 +420,10 @@ pub async fn list_local_databases(host: String, port: u16, user: Option<String>,
     let res = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await;
     match res {
         Ok(Ok((client, connection))) => {
-            tokio::spawn(async move { drop(connection); });
+            // Drive the connection in the background — dropping it closes the
+            // socket immediately, so subsequent client queries fail with
+            // "connection closed".
+            tokio::spawn(async move { let _ = connection.await; });
             eprintln!("[local-pg] connected OK");
             let rows = client.query(
                 "SELECT datname, pg_catalog.pg_get_userbyid(datdba) AS owner, pg_encoding_to_char(encoding) AS encoding, NULL::text AS size FROM pg_database WHERE datistemplate = false ORDER BY datname",
@@ -452,7 +455,7 @@ pub async fn create_local_database(host: String, port: u16, db_name: String, use
     let (client, connection) = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await
         .map_err(|_| "Timed out (5s)".to_string())?
         .map_err(|e| format!("connect: {}", e))?;
-    tokio::spawn(async move { drop(connection); });
+    tokio::spawn(async move { let _ = connection.await; });
     client.execute(
         &format!("CREATE DATABASE \"{}\"", db_name),
         &[],
@@ -467,7 +470,7 @@ pub async fn drop_local_database(host: String, port: u16, db_name: String, user:
     let (client, connection) = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await
         .map_err(|_| "Timed out (5s)".to_string())?
         .map_err(|e| format!("connect: {}", e))?;
-    tokio::spawn(async move { drop(connection); });
+    tokio::spawn(async move { let _ = connection.await; });
     client.execute(
         &format!("DROP DATABASE IF EXISTS \"{}\"", db_name),
         &[],
