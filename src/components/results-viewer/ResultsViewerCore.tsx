@@ -152,7 +152,8 @@ export function ResultsViewer({
   const [localRows, setLocalRows] = useState<Record<string, unknown>[] | null>(null);
   const rightSidebar = useRightSidebar();
 
-  const canEdit = enableCRUD && !readOnly && schema && table && pkColumns && pkColumns.length > 0 && connectionId;
+  const canMutate = enableCRUD && !readOnly && schema && table && connectionId;
+  const canEdit = canMutate && pkColumns && pkColumns.length > 0;
   const displayResult = localRows ? { ...result, rows: localRows } : result;
 
   // Drive the top-level right sidebar content from the local editor state. The
@@ -493,13 +494,13 @@ export function ResultsViewer({
       {/* In the table view the export dropdown is portaled after the row counter
           and the insert/delete toggle into the DatabaseView top bar; elsewhere
           (query view) they fall back to a local toolbar. */}
-      {canEdit && (() => {
+      {canMutate && (() => {
         const actionsSlot = typeof document !== 'undefined' ? document.getElementById('table-actions-slot') : null;
         const exportSlot = typeof document !== 'undefined' ? document.getElementById('export-slot') : null;
         if (!actionsSlot) return null;
         return createPortal(
           <div className="flex items-center gap-1.5">
-            {selectedRows.size === 0 ? (
+            {selectedRows.size === 0 || !canEdit ? (
               <Button size="sm" className="h-7 text-xs gap-1.5" onClick={handleOpenInsert}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
             ) : (
               <Button variant="destructive" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setDeleteDialogOpen(true)}>

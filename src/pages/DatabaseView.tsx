@@ -46,7 +46,7 @@ export default function DatabaseView() {
   // Schedule auto-refresh for the active table when enabled.
   useEffect(() => {
     if (!autoRefreshMs || !activeTab || activeTab.kind !== "table") return;
-    const id = setInterval(() => fetchDataRef.current(), autoRefreshMs);
+    const id = setInterval(() => fetchDataRef.current(true), autoRefreshMs);
     return () => clearInterval(id);
   }, [autoRefreshMs, activeTab, connectionId]);
 
@@ -194,9 +194,9 @@ export default function DatabaseView() {
       .catch(console.error);
   }, [connectionId, activeTab, columnsMeta]);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (silent = false) => {
     if (!connectionId || !activeTab || activeTab.kind !== "table") return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const data = await API.getTableData(connectionId, activeTab.schema, activeTab.table, page, pageSize);
@@ -210,11 +210,13 @@ export default function DatabaseView() {
       });
       setTotalCount(data.totalCount);
     } catch (e: any) {
-      setError(String(e));
-      setResult(null);
-      setTotalCount(0);
+      if (!silent) {
+        setError(String(e));
+        setResult(null);
+        setTotalCount(0);
+      }
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [connectionId, activeTab, page, pageSize]);
 
   const fetchDataRef = useRef(fetchData);
@@ -279,7 +281,7 @@ export default function DatabaseView() {
           <div className="flex items-center gap-3">
             <div id="table-actions-slot" />
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="sm" className="h-7 px-1.5 gap-1 text-muted-foreground hover:text-foreground" disabled={loading} onClick={fetchData}>
+              <Button variant="ghost" size="sm" className="h-7 px-1.5 gap-1 text-muted-foreground hover:text-foreground" disabled={loading} onClick={() => fetchData()}>
                 {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin-burst" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 <span className="text-xs">Refresh</span>
               </Button>
@@ -292,15 +294,15 @@ export default function DatabaseView() {
                 <PopoverContent className="w-44 p-1" align="start">
                   <div className="text-xs font-medium text-muted-foreground px-2 py-1.5">Auto refresh</div>
                   <button onClick={() => { setAutoRefreshMs(null); setAutoRefreshOpen(false); }}
-                    className={cn("flex items-center gap-2 w-full px-2 py-1 text-xs rounded hover:bg-accent", autoRefreshMs === null && "font-medium")}>
-                    {autoRefreshMs === null && <Check className="h-3 w-3" />}
-                    Off
+                    className={cn("flex items-center justify-between w-full px-2 py-1 text-xs rounded hover:bg-accent", autoRefreshMs === null && "font-medium")}>
+                    <span>Off</span>
+                    {autoRefreshMs === null && <Check className="h-3 w-3 shrink-0" />}
                   </button>
                   {[{ label: "5 seconds", ms: 5000 }, { label: "10 seconds", ms: 10000 }, { label: "30 seconds", ms: 30000 }, { label: "1 minute", ms: 60000 }, { label: "5 minutes", ms: 300000 }].map(opt => (
                     <button key={opt.ms} onClick={() => { setAutoRefreshMs(opt.ms); setAutoRefreshOpen(false); }}
-                      className={cn("flex items-center gap-2 w-full px-2 py-1 text-xs rounded hover:bg-accent", autoRefreshMs === opt.ms && "font-medium")}>
-                      {autoRefreshMs === opt.ms && <Check className="h-3 w-3" />}
-                      {opt.label}
+                      className={cn("flex items-center justify-between w-full px-2 py-1 text-xs rounded hover:bg-accent", autoRefreshMs === opt.ms && "font-medium")}>
+                      <span>{opt.label}</span>
+                      {autoRefreshMs === opt.ms && <Check className="h-3 w-3 shrink-0" />}
                     </button>
                   ))}
                 </PopoverContent>
@@ -347,7 +349,7 @@ export default function DatabaseView() {
         <div className="flex-1 overflow-hidden">
           <ResultsViewer result={result} error={error} loading={loading}
             schema={activeTab.schema} table={activeTab.table}
-            onRefresh={fetchData}
+            onRefresh={() => fetchData()}
             connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
             columnsMeta={columnsMeta[activeTab.id]}
             enableCRUD={true} readOnly={readOnly}
