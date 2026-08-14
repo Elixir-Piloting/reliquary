@@ -365,19 +365,24 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
           {mode === 'edit' ? (
-            hasChanges && (
+            hasChanges ? (
               <Button size="sm" onClick={view === 'json' ? handleSaveFromJson : handleSaveEdit} disabled={saving}>
                 {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                 Stage Changes
               </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
             )
           ) : (
-            <Button size="sm" onClick={handleInsert} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-              Stage Insert
-            </Button>
+            hasChanges ? (
+              <Button size="sm" onClick={handleInsert} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Stage Insert
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+            )
           )}
         </div>
       </div>
