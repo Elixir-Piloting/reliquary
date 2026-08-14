@@ -289,7 +289,7 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
                       <TooltipProvider delayDuration={600}>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="shrink-0 flex items-center">
+                            <span className="shrink-0 flex items-center text-muted-foreground">
                               <KindIcon className="h-4 w-4" />
                             </span>
                           </TooltipTrigger>
