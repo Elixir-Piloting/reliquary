@@ -351,7 +351,10 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
                     enumValues={enumValues[col.columnName] ?? null}
                     onValue={v => setValue(col.columnName, v)}
                     disabled={disabled}
-                    changed={stagedValues ? stagedValues[col.columnName] !== undefined : false}
+                    changed={
+                      (stagedValues ? stagedValues[col.columnName] !== undefined : false) ||
+                      (mode === 'edit' && row ? (values[col.columnName] ?? '') !== formatValueForInput(row[col.columnName] ?? null, getInputType(col.dataType)) : false)
+                    }
                   />
                 </div>
               );
