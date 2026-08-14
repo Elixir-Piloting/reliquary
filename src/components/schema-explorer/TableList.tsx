@@ -2,7 +2,8 @@
 import * as React from "react";
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Table2, Eye, Layers, Loader2, Plus, RefreshCw, ShieldAlert, ChevronRight, ChevronDown, MoreVertical, FileCode2, ClipboardCopy, Pencil, CopyPlus, Download, Eraser, Trash2 } from "lucide-react";
+import { Eye, Layers, Loader2, Plus, RefreshCw, ShieldAlert, ChevronRight, ChevronDown, MoreVertical, FileCode2, ClipboardCopy, Pencil, CopyPlus, Download, Eraser, Trash2 } from "lucide-react";
+import { Table as PhosphorTable } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
@@ -35,12 +36,12 @@ interface TableListProps {
   selectedSchema?: string;
 }
 
-function tableKind(table: Table): { icon: typeof Table2; label: string } {
+function tableKind(table: Table): { icon: typeof PhosphorTable; label: string } {
   const type = (table.tableType || "TABLE").toUpperCase();
   if (type.includes("MATERIALIZED")) return { icon: Layers, label: "Materialized view" };
   if (type.includes("VIEW")) return { icon: Eye, label: "View" };
-  if (type.includes("PARTITIONED")) return { icon: Table2, label: "Partitioned table" };
-  return { icon: Table2, label: "Table" };
+  if (type.includes("PARTITIONED")) return { icon: PhosphorTable, label: "Partitioned table" };
+  return { icon: PhosphorTable, label: "Table" };
 }
 
 function quoteIdent(name: string): string {
