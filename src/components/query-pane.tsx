@@ -151,11 +151,11 @@ export function QueryPane({ connectionId, tab, onQueryChange, onNewTab }: QueryP
   return (
     <div ref={containerRef} className="flex flex-col flex-1 min-h-0">
       <div className="h-12 border-b border-border flex items-center gap-2 px-4 shrink-0 overflow-x-auto">
-        <Button onClick={handleExecute} disabled={t.loading || !currentQuery.trim()}>
+        <Button size="sm" onClick={handleExecute} disabled={t.loading || !currentQuery.trim()}>
           {t.loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
           Run Query
+          <span className="ml-1.5 hidden rounded border border-white/30 px-1.5 py-0.5 text-[10px] font-normal leading-none opacity-80 md:inline">Ctrl/⌘ + Enter</span>
         </Button>
-        <span className="text-xs text-muted-foreground">Ctrl/Cmd + Enter</span>
         <div className="flex-1" />
         <QueryHistory connectionId={connectionId} onSelect={onQueryChange} />
         <Button variant="outline" size="sm" onClick={runExplain} disabled={t.explainLoading || !currentQuery.trim()} title="EXPLAIN (FORMAT JSON) the current query">
@@ -177,11 +177,11 @@ export function QueryPane({ connectionId, tab, onQueryChange, onNewTab }: QueryP
       </div>
       <div
         onPointerDown={onDividerPointerDown}
-        className={cn("h-1.5 shrink-0 cursor-row-resize border-y transition-colors select-none",
+        className={cn("h-1.5 shrink-0 cursor-row-resize border-t border-border transition-colors select-none",
           dragging ? "bg-primary/70" : "hover:bg-primary/50")}
         title="Drag to resize"
       />
-      <div style={{ height: resultsHeight }} className="shrink-0 overflow-hidden border-t border-border">
+      <div style={{ height: resultsHeight }} className="shrink-0 overflow-hidden">
         {showingExplain ? (
           <>
             <div className="flex h-8 items-center gap-2 border-b border-border bg-muted/20 px-3">

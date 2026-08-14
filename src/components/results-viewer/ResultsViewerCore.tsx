@@ -504,7 +504,7 @@ export function ResultsViewer({
             {selectedRows.size === 0 ? (
               <Button size="sm" className="h-7 text-xs gap-1.5" onClick={handleOpenInsert}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
             ) : (
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteDialogOpen(true)}>
+              <Button variant="destructive" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setDeleteDialogOpen(true)}>
                 <Trash2 className="h-3.5 w-3.5" />Delete Selected ({selectedRows.size})
               </Button>
             )}
