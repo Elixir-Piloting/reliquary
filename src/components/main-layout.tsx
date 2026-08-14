@@ -67,6 +67,10 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
     if (currentConnection) navigate(`/db/${currentConnection.id}?table=${schema}.${table}`);
   };
 
+  const handleNewTable = (schema: string) => {
+    if (currentConnection) navigate(`/db/${currentConnection.id}?newTable=${schema}`);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <div className={cn("border-r border-border flex flex-col transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "w-64", "shrink-0")}>
@@ -113,7 +117,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
           </Popover>
         </div>
         <ScrollArea className="flex-1 p-4">
-          <SchemaExplorer connectionId={currentConnection?.id} onTableSelect={handleTableSelect} />
+          <SchemaExplorer connectionId={currentConnection?.id} onTableSelect={handleTableSelect} onOpenNewTableTab={handleNewTable} />
         </ScrollArea>
         <div className="p-2 shrink-0">
           <TooltipProvider>

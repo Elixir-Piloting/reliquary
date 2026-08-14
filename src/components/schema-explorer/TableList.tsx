@@ -49,14 +49,9 @@ export function TableList({ tables, isLoading, tableSearchTerm, onRefresh, onTab
               </Tooltip></TooltipProvider>
             )}
             {onOpenNewTableTab && (
-              <TooltipProvider><Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onOpenNewTableTab(selectedSchema || "public")}>
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent><p>Create new table</p></TooltipContent>
-              </Tooltip></TooltipProvider>
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground" onClick={() => onOpenNewTableTab(selectedSchema || "public")}>
+                <Plus className="h-3.5 w-3.5" />New Table
+              </Button>
             )}
           </div>
         </div>

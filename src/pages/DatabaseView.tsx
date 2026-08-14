@@ -135,6 +135,15 @@ export default function DatabaseView() {
   }, [searchParams, openTable]);
 
   useEffect(() => {
+    const newTableSchema = searchParams.get("newTable");
+    if (newTableSchema) {
+      openCreateTab(newTableSchema);
+      navigate(`/db/${connectionId}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get("newTable")]);
+
+  useEffect(() => {
     if (!connectionId || !activeTab) return;
     if (columnsMeta[activeTab.id]) return;
     invoke<ColumnInfo[]>("get_columns", { connectionId, schema: activeTab.schema, table: activeTab.table })
@@ -233,7 +242,6 @@ export default function DatabaseView() {
                         <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage(totalPages)}><ChevronsRight className="h-3 w-3" /></Button>
                       </div>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => openCreateTab(schemaName)}><Plus className="h-4 w-4 mr-1" />New Table</Button>
                     <div id="review-changes-slot" />
                   </div>
                 </div>
