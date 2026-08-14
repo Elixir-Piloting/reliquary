@@ -33,12 +33,12 @@ export default function DatabaseView() {
 
   const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [totalCount, setTotalCount] = useState(0);
+  const [resultCache, setResultCache] = useState<Record<string, QueryResult | null>>({});
+  const [totalCountCache, setTotalCountCache] = useState<Record<string, number>>({});
+  const [pageByTab, setPageByTab] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
   const [pkColumns, setPkColumns] = useState<Record<string, string[]>>({});
@@ -51,6 +51,10 @@ export default function DatabaseView() {
   const [hiddenByTab, setHiddenByTab] = useState<Record<string, Set<string>>>({});
 
   const activeTab = tabs.find(t => t.id === activeTabId);
+  const tabId = activeTab?.id || "";
+  const result = activeTab ? (resultCache[tabId] ?? null) : null;
+  const totalCount = activeTab ? (totalCountCache[tabId] ?? 0) : 0;
+  const page = activeTab ? (pageByTab[tabId] ?? 1) : 1;
 
   const sort = activeTab ? (sortByTab[activeTab.id] ?? null) : null;
   const filters = useMemo(() => (activeTab ? (filtersByTab[activeTab.id] ?? EMPTY_FILTERS) : EMPTY_FILTERS), [activeTab, filtersByTab]);
@@ -94,7 +98,7 @@ export default function DatabaseView() {
       if (prev.find(t => t.id === tabId)) { setActiveTabId(tabId); return prev; }
       const newTab: WorkspaceTab = { kind: "table", id: tabId, schema, table, label: `${schema}.${table}` };
       setActiveTabId(tabId);
-      setPage(1);
+      setPageByTab(prev2 => ({ ...prev2, [tabId]: 1 }));
       return [...prev, newTab];
     });
   }, []);
@@ -214,21 +218,22 @@ export default function DatabaseView() {
     setError(null);
     try {
       const data = await API.getTableData(connectionId, activeTab.schema, activeTab.table, page, pageSize, sort?.column, sort?.direction, filters);
-      setResult({
+      const newResult: QueryResult = {
         columns: data.columns,
         rows: data.rows,
         rowCount: data.rows.length,
         affectedRows: undefined,
         isSelect: true,
         executionTimeMs: 0,
-      });
-      setTotalCount(data.totalCount);
-      loadedTabRef.current = activeTab.id;
+      };
+      setResultCache(prev => ({ ...prev, [activeTab.id]: newResult }));
+      setTotalCountCache(prev => ({ ...prev, [activeTab.id]: data.totalCount }));
+      loadedTabsRef.current.add(activeTab.id);
     } catch (e: any) {
       if (!silent) {
         setError(String(e));
-        setResult(null);
-        setTotalCount(0);
+        setResultCache(prev => ({ ...prev, [activeTab.id]: null }));
+        setTotalCountCache(prev => ({ ...prev, [activeTab.id]: 0 }));
       }
     }
     if (!silent) setLoading(false);
@@ -238,13 +243,13 @@ export default function DatabaseView() {
   const fetchDataRef = useRef(fetchData);
   fetchDataRef.current = fetchData;
 
-  // Re-fetch on sort/filter/page changes without blanking the grid — but only
-  // within the SAME table. Switching tables must show the new table's content,
-  // so it fetches non-silently (loading state) instead of showing stale rows.
-  const loadedTabRef = useRef<string | null>(null);
+  // Fetch when the tab changes or sort/filter/page change. If this table has
+  // already been loaded, fetch silently: show the cached rows immediately and
+  // refresh in the background. A never-loaded table fetches with loading.
+  const loadedTabsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const sameTab = loadedTabRef.current !== null && loadedTabRef.current === activeTab?.id;
-    fetchData(sameTab);
+    if (!activeTab || activeTab.kind !== "table") return;
+    fetchData(loadedTabsRef.current.has(activeTab.id));
   }, [fetchData, activeTab?.id]);
 
   const cycleSort = useCallback((column: string) => {
@@ -276,6 +281,15 @@ export default function DatabaseView() {
   }, [activeTab]);
 
   const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 0;
+  const setPage = useCallback((p: number | ((prev: number) => number)) => {
+    if (!activeTab) return;
+    const tabId = activeTab.id;
+    setPageByTab(prev => {
+      const cur = prev[tabId] ?? 1;
+      const next = typeof p === "function" ? p(cur) : p;
+      return { ...prev, [tabId]: Math.max(1, next) };
+    });
+  }, [activeTab]);
   const activeView = activeTab?.kind === "query" ? "query" : activeTab?.kind === "visualizer" ? "visualizer" : "tables";
 
   const renderContent = () => {
