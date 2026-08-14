@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { X } from "lucide-react";
+import { X, Plus, Pencil } from "lucide-react";
+import { Table, Code, Network } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import type { WorkspaceTab } from "@/lib/workspace-tabs";
 
@@ -26,12 +27,17 @@ export function DbTabs({ tabs, activeTabId, onTabSelect, onTabClose, onTabRename
 
   if (tabs.length === 0) return null;
 
-  const tabColor = (tab: WorkspaceTab) =>
-    tab.kind === "create" ? "text-blue-500"
-    : tab.kind === "edit" ? "text-amber-500"
-    : tab.kind === "query" ? "text-emerald-600"
-    : tab.kind === "visualizer" ? "text-violet-500"
-    : undefined;
+  const tabIcon = (tab: WorkspaceTab) => {
+    const className = "h-4 w-4 shrink-0";
+    switch (tab.kind) {
+      case "table": return <Table className={className} weight="duotone" />;
+      case "create": return <Plus className={className} />;
+      case "edit": return <Pencil className={className} />;
+      case "query": return <Code className={className} />;
+      case "visualizer": return <Network className={className} />;
+      default: return null;
+    }
+  };
 
   return (
     <div className="flex items-center border-b border-border bg-muted/20 overflow-x-auto shrink-0">
@@ -39,6 +45,7 @@ export function DbTabs({ tabs, activeTabId, onTabSelect, onTabClose, onTabRename
         <div key={tab.id} className={cn("group flex items-center gap-2 px-3 py-2 text-sm transition-colors relative hover:bg-accent/50 border-t border-x border-border",
           activeTabId === tab.id ? "bg-background text-foreground font-medium" : "text-muted-foreground"
         )}>
+          {tabIcon(tab)}
           <button
             onClick={() => onTabSelect(tab.id)}
             onDoubleClick={e => { if (tab.kind === "query") { e.preventDefault(); e.stopPropagation(); setRenamingTabId(tab.id); setRenameValue(tab.label); } }}
@@ -53,7 +60,7 @@ export function DbTabs({ tabs, activeTabId, onTabSelect, onTabClose, onTabRename
                 className="bg-background border border-border rounded px-1 py-0.5 text-sm min-w-[60px] max-w-[200px]"
               />
             ) : (
-              <span className={cn("whitespace-nowrap", tabColor(tab))}>{tab.label}</span>
+              <span className="whitespace-nowrap">{tab.label}</span>
             )}
           </button>
           <span className="h-4 w-4 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive cursor-pointer flex items-center justify-center rounded transition-colors"
