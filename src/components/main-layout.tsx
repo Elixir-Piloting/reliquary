@@ -132,7 +132,16 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         {children}
       </div>
       <RightSidebar open={rightSidebar.open} width={380}>
-        {rightSidebar.content}
+        {rightSidebar.content ?? (
+          <div className="flex h-full flex-col">
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-3">
+              <p className="text-sm font-semibold">Row Inspector</p>
+            </div>
+            <div className="flex flex-1 items-center justify-center px-6">
+              <p className="text-center text-sm text-muted-foreground">Select a row to view its content and edit it.</p>
+            </div>
+          </div>
+        )}
       </RightSidebar>
     </div>
   );

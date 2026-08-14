@@ -470,23 +470,28 @@ export function ResultsViewer({
 
   return (
     <div className="flex h-full flex-col">
-      {/* In the table view the export dropdown and the insert/delete toggle are
-          portaled into the DatabaseView top bar next to refresh; elsewhere
+      {/* In the table view the export dropdown is portaled after the row counter
+          and the insert/delete toggle into the DatabaseView top bar; elsewhere
           (query view) they fall back to a local toolbar. */}
       {canEdit && (() => {
-        const slot = typeof document !== 'undefined' ? document.getElementById('table-actions-slot') : null;
-        if (!slot) return null;
+        const actionsSlot = typeof document !== 'undefined' ? document.getElementById('table-actions-slot') : null;
+        const exportSlot = typeof document !== 'undefined' ? document.getElementById('export-slot') : null;
+        if (!actionsSlot) return null;
         return createPortal(
           <div className="flex items-center gap-1.5">
-            {exportMenu}
             {selectedRows.size === 0 ? (
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={handleOpenInsert}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
+              <Button size="sm" className="h-7 text-xs gap-1.5" onClick={handleOpenInsert}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
             ) : (
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteDialogOpen(true)}>
                 <Trash2 className="h-3.5 w-3.5" />Delete Selected ({selectedRows.size})
               </Button>
             )}
-          </div>, slot);
+          </div>, actionsSlot);
+      })()}
+      {canEdit && (() => {
+        const exportSlot = typeof document !== 'undefined' ? document.getElementById('export-slot') : null;
+        if (!exportSlot) return null;
+        return createPortal(exportMenu, exportSlot);
       })()}
       {!canEdit && (
         <div className="shrink-0 border-b border-border bg-card/80 backdrop-blur-sm px-4 py-2">

@@ -219,6 +219,7 @@ export default function DatabaseView() {
                         <span className={cn(totalCount >= 10000 && "text-yellow-500")}>
                           {totalCount >= 10000 ? "10000+" : totalCount} rows
                         </span>
+                        <div id="export-slot" />
                       </div>
                     )}
                   </div>
