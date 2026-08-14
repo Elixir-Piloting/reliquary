@@ -179,6 +179,8 @@ export function ResultsViewer({
         onClose={() => { rightSidebar.closeRight(); setEditor(null); }}
         onStageEdit={handleStageRowEdits}
         onStageInsert={handleInsertSubmit}
+        onSelectRow={handleSelectRow}
+        onDeleteRow={handleDeleteRowFromEditor}
       />
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,6 +252,38 @@ export function ResultsViewer({
   const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
     setEditor({ mode: 'edit', row });
+  };
+
+  /** Select the given row (by PK match) in the grid. */
+  const handleSelectRow = (row: Record<string, unknown>) => {
+    const idx = sortedRows.findIndex(r =>
+      Object.entries(getPkValues(row)).every(([k, v]) => r[k] === v)
+    );
+    if (idx === -1) return;
+    setSelectedRows(prev => { const n = new Set(prev); n.add(idx); return n; });
+    toast.success("Row selected");
+  };
+
+  /** Stage a delete for the row shown in the sidebar editor, then close it. */
+  const handleDeleteRowFromEditor = (row: Record<string, unknown>) => {
+    if (!canEdit || !schema || !table) return;
+    const pkEntries = Object.entries(getPkValues(row));
+    if (pkEntries.length === 0) { toast.error("Cannot delete: no primary key"); return; }
+    const whereClause = pkEntries.map(([k], i) => `"${k}" = $${i + 1}`).join(' AND ');
+    const change: PendingChange = {
+      id: `delete-${schema}.${table}-${Date.now()}`,
+      schema, table, op: 'delete',
+      columnName: '', dataType: '',
+      pkValues: getPkValues(row), originalValue: null, newValue: null,
+      statement: {
+        query: `DELETE FROM "${schema}"."${table}" WHERE ${whereClause}`,
+        params: pkEntries.map(([, v]) => v),
+      },
+    };
+    setPendingChanges(prev => [...prev, change]);
+    toast.info("Delete staged — review & apply to commit");
+    rightSidebar.closeRight();
+    setEditor(null);
   };
 
   const handleCellDoubleClick = (rowIdxInSorted: number, col: string, dataType: string, value: unknown) => {

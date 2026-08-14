@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @theme {
+  --font-sans: "Outfit", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-card: hsl(var(--card));
@@ -84,7 +85,7 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-feature-settings: "kern" 1, "liga" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -126,12 +127,14 @@
     animation: shimmer 1.5s infinite;
   }
 
-  * { scrollbar-width: thin; scrollbar-color: hsl(240 5% 65% / 0.3) hsl(240 3.7% 16%); }
-  *::-webkit-scrollbar { width: 8px; height: 8px; }
-  *::-webkit-scrollbar-track { background: hsl(240 3.7% 16%); border-radius: 4px; }
-  *::-webkit-scrollbar-thumb { background: hsl(240 5% 65% / 0.3); border-radius: 4px; }
-  *::-webkit-scrollbar-thumb:hover { background: hsl(240 5% 65% / 0.5); }
-  *::-webkit-scrollbar-corner { background: hsl(240 3.7% 16%); }
+  /* Slim scrollbars: no up/down arrows, invisible track, thumb only. */
+  * { scrollbar-width: thin; scrollbar-color: hsl(240 5% 60% / 0.4) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-button { display: none; width: 0; height: 0; background: transparent; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: hsl(240 5% 60% / 0.4); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+  *::-webkit-scrollbar-thumb:hover { background: hsl(240 5% 60% / 0.6); border: 2px solid transparent; background-clip: padding-box; }
+  *::-webkit-scrollbar-corner { background: transparent; }
 }
 
 @layer utilities {

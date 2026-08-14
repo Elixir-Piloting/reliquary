@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, KeyRound, ChevronRight } from "lucide-react";
+import { Loader2, KeyRound, ChevronRight, Trash2, CheckCircle2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getInputType, isPotentialEnum, isNumericType, isTextareaType, toSqlParamValue, formatValueForInput, displayValueToString } from "./field-types";
 import type { RowMutationStatement } from "@/lib/db/types";
@@ -28,6 +28,8 @@ interface RowEditorPanelProps {
   onClose: () => void;
   onStageEdit: (changes: PendingChangeLike[]) => void;
   onStageInsert: (statement: RowMutationStatement, values: Record<string, unknown>) => void;
+  onSelectRow?: (row: Record<string, unknown>) => void;
+  onDeleteRow?: (row: Record<string, unknown>) => void;
 }
 
 /** The subset of `PendingChange` the panel produces (matches results-viewer/types). */
@@ -92,7 +94,7 @@ function FieldControl({ column, value, enumValues, onValue }: {
   );
 }
 
-export function RowEditorPanel({ open, mode, connectionId, schema, table, columns, pkColumns, row, onClose, onStageEdit, onStageInsert }: RowEditorPanelProps) {
+export function RowEditorPanel({ open, mode, connectionId, schema, table, columns, pkColumns, row, onClose, onStageEdit, onStageInsert, onSelectRow, onDeleteRow }: RowEditorPanelProps) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [enumValues, setEnumValues] = useState<Record<string, string[] | null>>({});
   const [saving, setSaving] = useState(false);
@@ -227,12 +229,26 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
       {validationError && (
         <div className="border-t border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive">{validationError}</div>
       )}
-      <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
-        <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button size="sm" onClick={mode === 'edit' ? handleSaveEdit : handleInsert} disabled={saving}>
-          {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-          {mode === 'edit' ? 'Stage Changes' : 'Stage Insert'}
-        </Button>
+      <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          {mode === 'edit' && row && onDeleteRow && (
+            <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onDeleteRow(row)} disabled={saving}>
+              <Trash2 className="h-3.5 w-3.5 mr-1" />Delete
+            </Button>
+          )}
+          {mode === 'edit' && row && onSelectRow && (
+            <Button variant="outline" size="sm" onClick={() => onSelectRow(row)} disabled={saving}>
+              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Select
+            </Button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button size="sm" onClick={mode === 'edit' ? handleSaveEdit : handleInsert} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+            {mode === 'edit' ? 'Stage Changes' : 'Stage Insert'}
+          </Button>
+        </div>
       </div>
     </div>
   );
