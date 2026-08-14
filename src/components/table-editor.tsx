@@ -14,13 +14,13 @@ import { CreateTableSqlPanel } from "@/components/create-table-sql-panel";
 
 const COLUMN_TYPES = ["VARCHAR", "TEXT", "INTEGER", "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "REAL", "DOUBLE PRECISION", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ", "UUID", "JSON", "JSONB"];
 
-/** Types that accept a parameter (length / precision) in the DDL. */
-const PARAM_TYPES = new Set(["VARCHAR", "CHAR", "DECIMAL", "NUMERIC", "TIMESTAMP", "TIMESTAMPTZ", "TIME"]);
-
 const FK_ACTIONS = ["NO ACTION", "CASCADE", "SET NULL", "RESTRICT"] as const;
 
-/** Shared grid template for the column header + rows (7 cells). */
-const COL_GRID = "grid-cols-[3rem_minmax(8rem,1fr)_8rem_5rem_7rem_minmax(10rem,1fr)_2.5rem]";
+/** Shared grid template for the column header + rows (6 cells). */
+const COL_GRID = "grid-cols-[3rem_minmax(8rem,1fr)_8rem_7rem_minmax(10rem,1fr)_2.5rem]";
+
+/** Shared grid template for the foreign-key header + rows (6 cells). */
+const FK_GRID = "grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_8rem_8rem_2.5rem]";
 
 /** Vertical divider on every cell except the first column. */
 const cellClass = "border-l border-border/60 first:border-l-0";
@@ -29,7 +29,6 @@ interface NewColumn {
   id: string;
   name: string;
   type: string;
-  parameter: string;
   nullable: boolean;
   defaultValue: string;
   primaryKey: boolean;
@@ -49,7 +48,7 @@ interface ForeignKeyDraft {
 let idCounter = 0;
 const nextId = () => `col-${Date.now()}-${idCounter++}`;
 
-const emptyColumn = (): NewColumn => ({ id: nextId(), name: "", type: "TEXT", parameter: "", nullable: true, defaultValue: "", primaryKey: false, autoIncrement: false, unique: false });
+const emptyColumn = (): NewColumn => ({ id: nextId(), name: "", type: "TEXT", nullable: true, defaultValue: "", primaryKey: false, autoIncrement: false, unique: false });
 
 const emptyFk = (schema: string): ForeignKeyDraft => ({ column: "", refSchema: schema, refTable: "", refColumn: "", onDelete: "NO ACTION", onUpdate: "NO ACTION" });
 
@@ -160,7 +159,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const buildCreateSQL = useCallback((): string => {
     const cols = columns.map(c => {
       let def = `"${c.name}" ${c.type}`;
-      if (PARAM_TYPES.has(c.type.toUpperCase()) && c.parameter.trim()) def += `(${c.parameter.trim()})`;
       if (c.autoIncrement && /INT|SERIAL/i.test(c.type)) def += " GENERATED ALWAYS AS IDENTITY";
       if (c.primaryKey) def += " PRIMARY KEY";
       else if (!c.nullable) def += " NOT NULL";
@@ -220,7 +218,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const handleAddColumn = async (col: NewColumn) => {
     if (!table || !col.name.trim()) { toast.error("Column name is required"); return; }
     let def = `"${col.name}" ${col.type}`;
-    if (PARAM_TYPES.has(col.type.toUpperCase()) && col.parameter.trim()) def += `(${col.parameter.trim()})`;
     if (!col.nullable) def += " NOT NULL";
     if (col.defaultValue) def += ` DEFAULT ${col.defaultValue}`;
     await runAlter(`ALTER TABLE "${schema}"."${table}" ADD COLUMN ${def};`, `Column "${col.name}" added`);
@@ -288,7 +285,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
         {headerBtn}
       </div>
       <div className="flex-1 overflow-auto px-6 pb-6 pt-4">
-        <div className="space-y-6 max-w-4xl">
+        <div className="space-y-6">
           {isCreate && (
             <div className="space-y-2">
               <Label>Table Name</Label>
@@ -358,13 +355,12 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
           )}
 
           {/* Column editor — header row + rows (no wrapper, vertical dividers only) */}
-          <div className="space-y-3">
+          <div className="space-y-2">
             <Label>{isCreate ? "Columns" : "Add New Columns"}</Label>
-            <div className={COL_GRID + " grid items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground"}>
+            <div className={COL_GRID + " grid items-center gap-2 text-xs font-medium text-muted-foreground border-b border-border/70 pb-1.5"}>
               <div className={cellClass + " flex items-center justify-center"}>#</div>
               <div className={cellClass}>Name</div>
               <div className={cellClass}>Type</div>
-              <div className={cellClass}>Params</div>
               <div className={cellClass}>Default</div>
               <div className={cellClass}>Constraints</div>
               <div className={cellClass} />
@@ -372,12 +368,11 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
             {columns.map((col, i) => {
               const isLast = i === columns.length - 1;
               const isFirst = i === 0;
-              const showParam = PARAM_TYPES.has(col.type.toUpperCase());
               return (
                 <div key={col.id} ref={el => { rowRefs.current[col.id] = el; }}
-                  className={COL_GRID + " grid items-center gap-2 px-3 py-1.5 text-sm"}>
+                  className={COL_GRID + " grid items-center gap-2 py-1 text-sm"}>
                   {/* # with stacked up/down chevrons */}
-                  <div className={cellClass + " flex flex-col items-center py-0.5"}>
+                  <div className={cellClass + " flex flex-col items-center"}>
                     <button onClick={() => moveColumn(i, -1)} disabled={isFirst}
                       className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move up">
                       <ChevronUp className="h-3 w-3" />
@@ -396,11 +391,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
                       <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
                       <SelectContent>{COLUMN_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                     </Select>
-                  </div>
-                  <div className={cellClass}>
-                    {showParam ? (
-                      <Input value={col.parameter} onChange={e => updateColumn(i, "parameter", e.target.value)} placeholder="(255)" className="h-8 text-sm" />
-                    ) : null}
                   </div>
                   <div className={cellClass}>
                     <Input value={col.defaultValue} onChange={e => updateColumn(i, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
@@ -431,54 +421,76 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
               );
             })}
             {columns.length === 0 && !isCreate && (
-              <p className="text-sm text-muted-foreground text-center py-4">No new columns queued. Add one below.</p>
+              <p className="text-sm text-muted-foreground text-center py-2">No new columns queued. Add one below.</p>
             )}
             <Button variant="outline" size="sm" onClick={addColumn}><Plus className="h-4 w-4 mr-1" />Add Column</Button>
           </div>
 
           {/* Foreign keys — UI only for now */}
           {isCreate && (
-            <div className="space-y-3">
+            <div className="space-y-2">
               <Label>Foreign Keys</Label>
+              <div className={FK_GRID + " grid items-center gap-2 text-xs font-medium text-muted-foreground border-b border-border/70 pb-1.5"}>
+                <div className={cellClass}>Column</div>
+                <div className={cellClass}>Reference Table</div>
+                <div className={cellClass}>Reference Column</div>
+                <div className={cellClass}>On Delete</div>
+                <div className={cellClass}>On Update</div>
+                <div className={cellClass} />
+              </div>
               {fkDrafts.map((fk, i) => (
-                <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground border-b border-border/60 last:border-b-0">
-                  <KeyRound className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                  <span className="font-mono">{fk.column || "?"}</span>
-                  <span>→</span>
-                  <span className="font-mono">{fk.refTable ? `${fk.refSchema}.${fk.refTable}.${fk.refColumn || "?"}` : "?"}</span>
-                  <span className="text-xs">ON DELETE {fk.onDelete} · ON UPDATE {fk.onUpdate}</span>
-                  <Button variant="ghost" size="icon" className="ml-auto h-6 w-6" onClick={() => setFkDrafts(prev => prev.filter((_, idx) => idx !== i))}><X className="h-3.5 w-3.5" /></Button>
+                <div key={i} className={FK_GRID + " grid items-center gap-2 py-1 text-sm"}>
+                  <div className={cellClass + " font-mono"}>{fk.column || "—"}</div>
+                  <div className={cellClass + " font-mono"}>{fk.refTable ? `${fk.refSchema}.${fk.refTable}` : "—"}</div>
+                  <div className={cellClass + " font-mono"}>{fk.refColumn || "—"}</div>
+                  <div className={cellClass + " text-xs"}>{fk.onDelete}</div>
+                  <div className={cellClass + " text-xs"}>{fk.onUpdate}</div>
+                  <div className={cellClass + " flex items-center justify-end"}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => setFkDrafts(prev => prev.filter((_, idx) => idx !== i))} title="Remove foreign key"><X className="h-4 w-4" /></Button>
+                  </div>
                 </div>
               ))}
-              {/* Inline add row — same style as the column editor, one row, no wrapper */}
-              <div className="grid grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_8rem_8rem_2rem] items-center gap-2 px-3 py-1.5 text-sm">
-                <Select value={fkForm.column} onValueChange={v => setFkForm(f => ({ ...f, column: v }))}>
-                  <SelectTrigger className="h-8"><SelectValue placeholder="Column" /></SelectTrigger>
-                  <SelectContent>
-                    {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={fkForm.refTable} onValueChange={v => setFkForm(f => ({ ...f, refTable: v }))}>
-                  <SelectTrigger className="h-8"><SelectValue placeholder="Ref table" /></SelectTrigger>
-                  <SelectContent>
-                    {refTables.map(t => <SelectItem key={t.tableName} value={t.tableName}>{t.tableName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={fkForm.refColumn} onValueChange={v => setFkForm(f => ({ ...f, refColumn: v }))} disabled={!fkForm.refTable}>
-                  <SelectTrigger className="h-8"><SelectValue placeholder="Ref column" /></SelectTrigger>
-                  <SelectContent>
-                    {refColumns.map(c => <SelectItem key={c.columnName} value={c.columnName}>{c.columnName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={fkForm.onDelete} onValueChange={v => setFkForm(f => ({ ...f, onDelete: v }))}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON DELETE" /></SelectTrigger>
-                  <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
-                </Select>
-                <Select value={fkForm.onUpdate} onValueChange={v => setFkForm(f => ({ ...f, onUpdate: v }))}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON UPDATE" /></SelectTrigger>
-                  <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
-                </Select>
-                <Button variant="ghost" size="icon" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn} className="h-8 w-8 text-muted-foreground hover:text-foreground" title="Add foreign key"><Plus className="h-4 w-4" /></Button>
+              {/* Inline add row — same grid as the drafts */}
+              <div className={FK_GRID + " grid items-center gap-2 py-1 text-sm"}>
+                <div className={cellClass}>
+                  <Select value={fkForm.column} onValueChange={v => setFkForm(f => ({ ...f, column: v }))}>
+                    <SelectTrigger className="h-8"><SelectValue placeholder="Column" /></SelectTrigger>
+                    <SelectContent>
+                      {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className={cellClass}>
+                  <Select value={fkForm.refTable} onValueChange={v => setFkForm(f => ({ ...f, refTable: v }))}>
+                    <SelectTrigger className="h-8"><SelectValue placeholder="Ref table" /></SelectTrigger>
+                    <SelectContent>
+                      {refTables.map(t => <SelectItem key={t.tableName} value={t.tableName}>{t.tableName}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className={cellClass}>
+                  <Select value={fkForm.refColumn} onValueChange={v => setFkForm(f => ({ ...f, refColumn: v }))} disabled={!fkForm.refTable}>
+                    <SelectTrigger className="h-8"><SelectValue placeholder="Ref column" /></SelectTrigger>
+                    <SelectContent>
+                      {refColumns.map(c => <SelectItem key={c.columnName} value={c.columnName}>{c.columnName}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className={cellClass}>
+                  <Select value={fkForm.onDelete} onValueChange={v => setFkForm(f => ({ ...f, onDelete: v }))}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON DELETE" /></SelectTrigger>
+                    <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className={cellClass}>
+                  <Select value={fkForm.onUpdate} onValueChange={v => setFkForm(f => ({ ...f, onUpdate: v }))}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON UPDATE" /></SelectTrigger>
+                    <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className={cellClass + " flex items-center justify-end"}>
+                  <Button variant="ghost" size="icon" onClick={addFk} disabled={!fkForm.column || !fkForm.refTable || !fkForm.refColumn} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Add foreign key"><Plus className="h-4 w-4" /></Button>
+                </div>
               </div>
             </div>
           )}
