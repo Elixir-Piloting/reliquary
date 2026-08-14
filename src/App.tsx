@@ -6,8 +6,6 @@ import AddConnectionPage from "@/pages/AddConnection";
 import AddConnectionFormPage from "@/pages/AddConnectionForm";
 import LocalPostgresSelectionPage from "@/pages/LocalPostgresSelection";
 import DatabaseView from "@/pages/DatabaseView";
-import QueryView from "@/pages/QueryView";
-import VisualizerPage from "@/pages/VisualizerPage";
 import SettingsPage from "@/pages/Settings";
 import { MainLayout } from "@/components/main-layout";
 import "@/index.css";
@@ -16,8 +14,7 @@ const queryClient = new QueryClient();
 
 /**
  * Persists the app layout (left sidebar, connection switcher) across the
- * database sub-routes so navigating between Query / Tables / Schema Visualizer
- * only swaps the content area instead of remounting the whole layout.
+ * database sub-routes so the workspace stays mounted and tab state is preserved.
  */
 function DbLayout() {
   return (
@@ -39,8 +36,8 @@ function App() {
           <Route path="/db/:connection" element={<DbLayout />}>
             <Route index element={<DatabaseView />} />
             <Route path="table/:table" element={<DatabaseView />} />
-            <Route path="query" element={<QueryView />} />
-            <Route path="visualizer" element={<VisualizerPage />} />
+            <Route path="query" element={<DatabaseView />} />
+            <Route path="visualizer" element={<DatabaseView />} />
           </Route>
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

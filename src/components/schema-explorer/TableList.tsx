@@ -108,7 +108,7 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
 
   const openInEditor = (table: Table) => {
     if (!connectionId) return;
-    navigate(`/db/${connectionId}/query?table=${table.schema}.${table.name}`);
+    navigate(`/db/${connectionId}?queryTable=${table.schema}.${table.name}`);
   };
 
   const copySchema = async (table: Table) => {

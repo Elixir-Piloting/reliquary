@@ -117,6 +117,51 @@ export const Persistence = {
     localStorage.setItem(`${STORAGE_PREFIX}safe_mode_${connectionId}`, String(enabled));
   },
 
+  getWorkspaceTabs(connectionId: string): Array<any> {
+    if (typeof window === "undefined") return [];
+    try {
+      const stored = localStorage.getItem(`${STORAGE_PREFIX}workspace_tabs_${connectionId}`);
+      if (stored) return JSON.parse(stored);
+    } catch { /* fall through to migration */ }
+    const migrated = this.migrateWorkspaceTabs(connectionId);
+    this.setWorkspaceTabs(connectionId, migrated);
+    return migrated;
+  },
+
+  setWorkspaceTabs(connectionId: string, tabs: Array<any>): void {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(`${STORAGE_PREFIX}workspace_tabs_${connectionId}`, JSON.stringify(tabs));
+  },
+
+  getActiveWorkspaceTabId(connectionId: string): string | null {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(`${STORAGE_PREFIX}workspace_active_${connectionId}`);
+  },
+
+  setActiveWorkspaceTabId(connectionId: string, tabId: string | null): void {
+    if (typeof window === "undefined") return;
+    if (tabId) localStorage.setItem(`${STORAGE_PREFIX}workspace_active_${connectionId}`, tabId);
+    else localStorage.removeItem(`${STORAGE_PREFIX}workspace_active_${connectionId}`);
+  },
+
+  /** Combine previously-separate table tabs and query tabs into one workspace tab list. */
+  migrateWorkspaceTabs(connectionId: string): Array<any> {
+    const tableTabs = this.getTableTabs(connectionId).map(t => {
+      if (t.type === "create") return { kind: "create", id: t.id, schema: t.schema, table: "", label: t.label };
+      if (t.type === "edit") return { kind: "edit", id: t.id, schema: t.schema, table: t.table, label: t.label };
+      return { kind: "table", id: t.id, schema: t.schema, table: t.table, label: t.label };
+    });
+    const queryTabs = this.getQueryTabs(connectionId).map(q => ({ kind: "query", id: q.id, label: q.label, query: q.query }));
+    const oldActive = this.getActiveTabId(connectionId);
+    const oldActiveQuery = this.getActiveQueryTabId(connectionId);
+    const all = [...tableTabs, ...queryTabs];
+    const active = oldActive && tableTabs.find(t => t.id === oldActive) ? oldActive
+      : oldActiveQuery && queryTabs.find(t => t.id === oldActiveQuery) ? oldActiveQuery
+      : all[0]?.id || null;
+    if (active) this.setActiveWorkspaceTabId(connectionId, active);
+    return all;
+  },
+
   getServerPassword(host: string, port: number): { user: string; password: string } | null {
     if (typeof window === "undefined") return null;
     try { const stored = localStorage.getItem(`${STORAGE_PREFIX}server_${host}_${port}`); return stored ? JSON.parse(stored) : null; }

@@ -1,11 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
 import { Code2, Table, Network, PanelLeft, PanelLeftClose, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Persistence } from "@/lib/persistence";
 import { useSidebar } from "@/components/sidebar-context";
 import { useRightSidebar } from "@/components/right-sidebar-context";
 import { useConnections } from "@/lib/query/hooks/use-connections";
@@ -15,7 +13,13 @@ import API from "@/lib/ipc-client";
 import type { ConnectionInfo } from "@/lib/ipc-client";
 import { onBranchSwitched } from "@/lib/branch-events";
 
-interface DatabaseNavbarProps { connectionId: string; }
+interface DatabaseNavbarProps {
+  connectionId: string;
+  activeView?: "tables" | "query" | "visualizer";
+  onOpenTables?: () => void;
+  onOpenQuery?: () => void;
+  onOpenVisualizer?: () => void;
+}
 
 const PROVIDER_BADGES: Record<string, { label: string; dot: string; text: string; ring: string }> = {
   neon: { label: "Neon", dot: "bg-[#7C3AED]", text: "text-[#7C3AED]", ring: "border-[#7C3AED]/30 bg-[#7C3AED]/10" },
@@ -33,9 +37,7 @@ function ProviderBadge({ provider }: { provider?: string }) {
   );
 }
 
-export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
+export function DatabaseNavbar({ connectionId, activeView, onOpenTables, onOpenQuery, onOpenVisualizer }: DatabaseNavbarProps) {
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebar();
   const rightSidebar = useRightSidebar();
   const { data: connections = [] } = useConnections();
@@ -58,22 +60,10 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
   }, [loadConnectionInfo]);
 
   const navItems = [
-    { id: "query", label: "Query", icon: Code2, path: `/db/${connectionId}/query` },
-    { id: "tables", label: "Tables", icon: Table, path: `/db/${connectionId}` },
-    { id: "visualizer", label: "Schema Visualizer", icon: Network, path: `/db/${connectionId}/visualizer` },
+    { id: "query", label: "Query", icon: Code2, onClick: onOpenQuery },
+    { id: "tables", label: "Tables", icon: Table, onClick: onOpenTables },
+    { id: "visualizer", label: "Schema Visualizer", icon: Network, onClick: onOpenVisualizer },
   ];
-
-  const handleNavClick = (path: string, view: string) => {
-    Persistence.setActiveView(connectionId, view);
-    navigate(path);
-  };
-
-  const isActive = (path: string) => {
-    if (path === `/db/${connectionId}`) {
-      return location.pathname === path || location.pathname.startsWith(`${path}/table`);
-    }
-    return location.pathname === path;
-  };
 
   const storedConn = connections.find(c => c.id === connectionId);
   const provider = connInfo?.isNeon ? "neon" : connInfo?.isSupabase ? "supabase" : connInfo?.provider || storedConn?.provider || "postgresql";
@@ -87,10 +77,10 @@ export function DatabaseNavbar({ connectionId }: DatabaseNavbarProps) {
       </Button>
       {navItems.map((item) => {
         const Icon = item.icon;
-        const active = isActive(item.path);
+        const active = activeView === item.id;
         return (
           <Button key={item.id} variant={active ? "secondary" : "ghost"} size="sm"
-            onClick={() => handleNavClick(item.path, item.id)}
+            onClick={item.onClick}
             className={cn("h-8 px-3 gap-2", active && "bg-accent text-accent-foreground")}>
             <Icon className="h-4 w-4" />
             <span className="text-sm font-medium">{item.label}</span>

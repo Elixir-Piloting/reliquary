@@ -1,21 +1,26 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { DatabaseNavbar } from "@/components/database-navbar";
-import { TableTabs, type TableTab } from "@/components/table-tabs";
+import { DbTabs } from "@/components/db-tabs";
 import { TableEditor } from "@/components/table-editor";
 import { ResultsViewer } from "@/components/results-viewer";
+import { QueryPane } from "@/components/query-pane";
+import SchemaVisualizer from "@/components/schema-visualizer";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Persistence } from "@/lib/persistence";
 import API from "@/lib/ipc-client";
 import type { QueryResult, ColumnInfo } from "@/lib/db/types";
+import { generateTabId, type WorkspaceTab } from "@/lib/workspace-tabs";
+import { clearQueryTransient } from "@/components/query-pane";
 import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000];
+const TABLES_TAB_ID = "__tables_home";
 
 function TableLoadingSkeleton() {
   return (
@@ -44,8 +49,9 @@ export default function DatabaseView() {
   const { connection: connectionId } = useParams<{ connection: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const [tableTabs, setTableTabs] = useState<TableTab[]>([]);
+  const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [totalCount, setTotalCount] = useState(0);
@@ -58,7 +64,7 @@ export default function DatabaseView() {
   const [columnsMeta, setColumnsMeta] = useState<Record<string, ColumnInfo[]>>({});
   const [readOnly, setReadOnly] = useState(false);
 
-  const activeTab = tableTabs.find(t => t.id === activeTabId);
+  const activeTab = tabs.find(t => t.id === activeTabId);
 
   useEffect(() => {
     if (!connectionId) return;
@@ -67,29 +73,32 @@ export default function DatabaseView() {
       .catch(() => setReadOnly(false));
   }, [connectionId]);
 
-  useEffect(() => {
-    if (connectionId) Persistence.setTableTabs(connectionId, tableTabs);
-  }, [connectionId, tableTabs]);
-
-  useEffect(() => {
-    if (connectionId && activeTabId) Persistence.setActiveTabId(connectionId, activeTabId);
-  }, [connectionId, activeTabId]);
-
+  // Load persisted workspace tabs (migrates legacy table/query tab storage).
   useEffect(() => {
     if (!connectionId) return;
-    const saved = Persistence.getTableTabs(connectionId);
-    if (saved && saved.length > 0) {
-      setTableTabs(saved);
-      const active = Persistence.getActiveTabId(connectionId);
-      setActiveTabId(active && saved.find(t => t.id === active) ? active : saved[0].id);
+    const saved = Persistence.getWorkspaceTabs(connectionId);
+    let list: WorkspaceTab[] = saved && saved.length > 0 ? saved : [];
+    if (!list.some(t => t.kind === "tables")) {
+      list = [{ kind: "tables", id: TABLES_TAB_ID, label: "Tables" }, ...list];
     }
+    setTabs(list);
+    const active = Persistence.getActiveWorkspaceTabId(connectionId);
+    setActiveTabId(active && list.find(t => t.id === active) ? active : list[0]?.id || null);
   }, [connectionId]);
+
+  useEffect(() => {
+    if (connectionId) Persistence.setWorkspaceTabs(connectionId, tabs.filter(t => t.kind !== "tables"));
+  }, [connectionId, tabs]);
+
+  useEffect(() => {
+    if (connectionId && activeTabId) Persistence.setActiveWorkspaceTabId(connectionId, activeTabId);
+  }, [connectionId, activeTabId]);
 
   const openTable = useCallback((schema: string, table: string) => {
     const tabId = `${schema}.${table}`;
-    setTableTabs(prev => {
+    setTabs(prev => {
       if (prev.find(t => t.id === tabId)) { setActiveTabId(tabId); return prev; }
-      const newTab: TableTab = { id: tabId, schema, table, label: `${schema}.${table}` };
+      const newTab: WorkspaceTab = { kind: "table", id: tabId, schema, table, label: `${schema}.${table}` };
       setActiveTabId(tabId);
       setPage(1);
       return [...prev, newTab];
@@ -98,61 +107,113 @@ export default function DatabaseView() {
 
   const openCreateTab = useCallback((schema: string) => {
     const tabId = `__create_${schema}_${Date.now()}`;
-    const newTab: TableTab = { id: tabId, schema, table: "", label: "New Table", type: "create" };
-    setTableTabs(prev => [...prev, newTab]);
+    const newTab: WorkspaceTab = { kind: "create", id: tabId, schema, table: "", label: "New Table" };
+    setTabs(prev => [...prev, newTab]);
     setActiveTabId(tabId);
   }, []);
 
   const openEditTab = useCallback((schema: string, table: string) => {
     const tabId = `__edit_${schema}.${table}`;
-    setTableTabs(prev => {
+    setTabs(prev => {
       const existing = prev.find(t => t.id === tabId);
       if (existing) { setActiveTabId(tabId); return prev; }
-      const newTab: TableTab = { id: tabId, schema, table, label: `Edit ${schema}.${table}`, type: "edit" };
+      const newTab: WorkspaceTab = { kind: "edit", id: tabId, schema, table, label: `Edit ${schema}.${table}` };
       setActiveTabId(tabId);
       return [...prev, newTab];
     });
   }, []);
 
+  const openQueryTab = useCallback((initialQuery?: string) => {
+    const id = generateTabId();
+    setTabs(prev => {
+      const count = prev.filter(t => t.kind === "query").length + 1;
+      const newTab: WorkspaceTab = { kind: "query", id, label: `Query ${count}`, query: initialQuery ?? "SELECT 1;" };
+      setActiveTabId(id);
+      return [...prev, newTab];
+    });
+  }, []);
+
+  const openVisualizerTab = useCallback(() => {
+    setTabs(prev => {
+      const existing = prev.find(t => t.kind === "visualizer");
+      if (existing) { setActiveTabId(existing.id); return prev; }
+      const newTab: WorkspaceTab = { kind: "visualizer", id: generateTabId(), label: "Schema Visualizer" };
+      setActiveTabId(newTab.id);
+      return [...prev, newTab];
+    });
+  }, []);
+
+  const openTablesTab = useCallback(() => {
+    setTabs(prev => {
+      const existing = prev.find(t => t.kind === "tables");
+      if (existing) { setActiveTabId(existing.id); return prev; }
+      const newTab: WorkspaceTab = { kind: "tables", id: TABLES_TAB_ID, label: "Tables" };
+      setActiveTabId(newTab.id);
+      return [...prev, newTab];
+    });
+  }, []);
+
   const closeTab = useCallback((tabId: string) => {
-    setTableTabs(prev => {
+    clearQueryTransient(tabId);
+    setTabs(prev => {
+      const idx = prev.findIndex(t => t.id === tabId);
       const newTabs = prev.filter(t => t.id !== tabId);
       if (activeTabId === tabId) {
-        const idx = prev.findIndex(t => t.id === tabId);
-        setActiveTabId((newTabs[idx] || newTabs[idx - 1] || null)?.id || null);
+        const next = newTabs[idx] || newTabs[idx - 1] || null;
+        setActiveTabId(next?.id || null);
       }
       return newTabs;
     });
   }, [activeTabId]);
 
+  const renameTab = useCallback((tabId: string, newLabel: string) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, label: newLabel } : t));
+  }, []);
+
+  const updateQueryTab = useCallback((tabId: string, newQuery: string) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, query: newQuery } : t));
+  }, []);
+
+  // Deep links / sidebar actions: open the right kind of tab and normalize the URL.
   useEffect(() => {
+    if (!connectionId) return;
+    const path = location.pathname;
+    const queryTable = searchParams.get("queryTable");
     const tableParam = searchParams.get("table");
-    if (tableParam) {
+    const newTableSchema = searchParams.get("newTable");
+    const editTableParam = searchParams.get("editTable");
+
+    if (queryTable) {
+      const [schema, table] = queryTable.split(".");
+      if (schema && table) openQueryTab(`SELECT * FROM "${schema}"."${table}" LIMIT 100;`);
+    } else if (path.endsWith("/query")) {
+      openQueryTab();
+    } else if (path.endsWith("/visualizer")) {
+      openVisualizerTab();
+    } else if (newTableSchema) {
+      openCreateTab(newTableSchema);
+    } else if (editTableParam) {
+      const [schema, table] = editTableParam.split(".");
+      if (schema && table) openEditTab(schema, table);
+    } else if (tableParam) {
       const [schema, table] = tableParam.split(".");
       if (schema && table) openTable(schema, table);
+    } else if (path.includes("/table/")) {
+      const parts = path.split("/");
+      const tIdx = parts.findIndex(p => p === "table");
+      const table = tIdx >= 0 ? parts[tIdx + 1] : undefined;
+      const schema = searchParams.get("schema") || "public";
+      if (table) openTable(schema, table);
     }
-  }, [searchParams, openTable]);
 
-  useEffect(() => {
-    const newTableSchema = searchParams.get("newTable");
-    if (newTableSchema) {
-      openCreateTab(newTableSchema);
+    if (path !== `/db/${connectionId}` || searchParams.size > 0) {
       navigate(`/db/${connectionId}`, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams.get("newTable")]);
+  }, [connectionId, searchParams, location.pathname, openTable, openCreateTab, openEditTab, openQueryTab, openVisualizerTab]);
 
   useEffect(() => {
-    const editTableParam = searchParams.get("editTable");
-    if (!editTableParam || !connectionId) return;
-    const [schema, table] = editTableParam.split(".");
-    if (schema && table) openEditTab(schema, table);
-    navigate(`/db/${connectionId}`, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams.get("editTable")]);
-
-  useEffect(() => {
-    if (!connectionId || !activeTab) return;
+    if (!connectionId || !activeTab || activeTab.kind !== "table") return;
     if (columnsMeta[activeTab.id]) return;
     invoke<ColumnInfo[]>("get_columns", { connectionId, schema: activeTab.schema, table: activeTab.table })
       .then(cols => {
@@ -163,7 +224,7 @@ export default function DatabaseView() {
   }, [connectionId, activeTab, columnsMeta]);
 
   const fetchData = useCallback(async () => {
-    if (!connectionId || !activeTab) return;
+    if (!connectionId || !activeTab || activeTab.kind !== "table") return;
     setLoading(true);
     setError(null);
     try {
@@ -188,91 +249,125 @@ export default function DatabaseView() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 0;
-  const schemaName = activeTab?.schema || (searchParams.get("newTable") || "public");
-  const isEditorTab = activeTab?.type === "create" || activeTab?.type === "edit";
+  const activeView = activeTab?.kind === "query" ? "query" : activeTab?.kind === "visualizer" ? "visualizer" : "tables";
 
-  return (
-    <div className="flex flex-col h-full">
-      <DatabaseNavbar connectionId={connectionId || ""} />
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <TableTabs tabs={tableTabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} />
-            {activeTab && isEditorTab ? (
-              <TableEditor
-                mode={activeTab.type === "create" ? "create" : "edit"}
-                schema={activeTab.schema}
-                table={activeTab.table || undefined}
-                connectionId={connectionId || ""}
-                onCreated={(s, t) => { closeTab(activeTab.id); openTable(s, t); }}
-                onDone={() => closeTab(activeTab.id)}
-              />
-            ) : activeTab ? (
-              <div className="flex-1 flex flex-col overflow-hidden">
-                <div className="h-auto min-h-12 border-b border-border flex items-center justify-between px-6 py-2 shrink-0 bg-muted/20">
-                  <div className="flex items-center gap-3">
-                    <div id="table-actions-slot" />
-                    <Button variant="outline" size="sm" disabled={loading} onClick={fetchData}>
-                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+  const renderContent = () => {
+    if (!activeTab || activeTab.kind === "tables") {
+      const schemaName = activeTab?.kind === "tables" ? "public" : (searchParams.get("newTable") || "public");
+      return (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <p className="text-muted-foreground">No table selected</p>
+            <p className="text-sm text-muted-foreground">Select a table from the schema explorer to view its data</p>
+            <Button variant="outline" size="sm" onClick={() => openCreateTab(schemaName)}><Plus className="h-4 w-4 mr-1" />Create New Table</Button>
+          </div>
+        </div>
+      );
+    }
+
+    if (activeTab.kind === "query") {
+      return (
+        <QueryPane
+          key={activeTab.id}
+          connectionId={connectionId || ""}
+          tab={activeTab}
+          onQueryChange={query => updateQueryTab(activeTab.id, query)}
+          onNewTab={() => openQueryTab()}
+        />
+      );
+    }
+
+    if (activeTab.kind === "visualizer") {
+      return (
+        <div className="flex-1 min-h-0">
+          {connectionId ? <SchemaVisualizer connectionId={connectionId} /> : null}
+        </div>
+      );
+    }
+
+    if (activeTab.kind === "create" || activeTab.kind === "edit") {
+      return (
+        <TableEditor
+          mode={activeTab.kind === "create" ? "create" : "edit"}
+          schema={activeTab.schema}
+          table={activeTab.table || undefined}
+          connectionId={connectionId || ""}
+          onCreated={(s, t) => { closeTab(activeTab.id); openTable(s, t); }}
+          onDone={() => closeTab(activeTab.id)}
+        />
+      );
+    }
+
+    // table tab
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="h-auto min-h-12 border-b border-border flex items-center justify-between px-6 py-2 shrink-0 bg-muted/20">
+          <div className="flex items-center gap-3">
+            <div id="table-actions-slot" />
+            <Button variant="outline" size="sm" disabled={loading} onClick={fetchData}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            </Button>
+            {result && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Popover open={pageSizePopoverOpen} onOpenChange={setPageSizePopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                      {pageSize} <ChevronRight className="h-3 w-3" />
                     </Button>
-                    {result && (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Popover open={pageSizePopoverOpen} onOpenChange={setPageSizePopoverOpen}>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
-                              {pageSize} <ChevronRight className="h-3 w-3" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-24 p-1" align="start">
-                            {PAGE_SIZE_OPTIONS.map(size => (
-                              <button key={size} onClick={() => { setPageSize(size); setPage(1); setPageSizePopoverOpen(false); }}
-                                className={cn("flex items-center gap-2 w-full px-2 py-1 text-xs rounded hover:bg-accent", pageSize === size && "font-medium")}>
-                                {pageSize === size && <Check className="h-3 w-3" />}
-                                {size}
-                              </button>
-                            ))}
-                          </PopoverContent>
-                        </Popover>
-                        <span className={cn(totalCount >= 10000 && "text-yellow-500")}>
-                          {totalCount >= 10000 ? "10000+" : totalCount} rows
-                        </span>
-                        <div id="export-slot" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {totalPages > 0 && (
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground mr-2">
-                        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => setPage(1)}><ChevronsLeft className="h-3 w-3" /></Button>
-                        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="h-3 w-3" /></Button>
-                        <span className="px-2 text-xs">{page} / {totalPages}</span>
-                        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="h-3 w-3" /></Button>
-                        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage(totalPages)}><ChevronsRight className="h-3 w-3" /></Button>
-                      </div>
-                    )}
-                    <div id="review-changes-slot" />
-                  </div>
-                </div>
-                <div className="flex-1 overflow-hidden">
-                  <ResultsViewer result={result} error={error} loading={loading}
-                    schema={activeTab.schema} table={activeTab.table}
-                    onRefresh={fetchData}
-                    connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
-                    columnsMeta={columnsMeta[activeTab.id]}
-                    enableCRUD={true} readOnly={readOnly}
-                    onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)} />
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center space-y-4">
-                  <p className="text-muted-foreground">No table selected</p>
-                  <p className="text-sm text-muted-foreground">Select a table from the schema explorer to view its data</p>
-                  <Button variant="outline" size="sm" onClick={() => openCreateTab(schemaName)}><Plus className="h-4 w-4 mr-1" />Create New Table</Button>
-                </div>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-24 p-1" align="start">
+                    {PAGE_SIZE_OPTIONS.map(size => (
+                      <button key={size} onClick={() => { setPageSize(size); setPage(1); setPageSizePopoverOpen(false); }}
+                        className={cn("flex items-center gap-2 w-full px-2 py-1 text-xs rounded hover:bg-accent", pageSize === size && "font-medium")}>
+                        {pageSize === size && <Check className="h-3 w-3" />}
+                        {size}
+                      </button>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+                <span className={cn(totalCount >= 10000 && "text-yellow-500")}>
+                  {totalCount >= 10000 ? "10000+" : totalCount} rows
+                </span>
+                <div id="export-slot" />
               </div>
             )}
           </div>
+          <div className="flex items-center gap-2">
+            {totalPages > 0 && (
+              <div className="flex items-center gap-1 text-sm text-muted-foreground mr-2">
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => setPage(1)}><ChevronsLeft className="h-3 w-3" /></Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="h-3 w-3" /></Button>
+                <span className="px-2 text-xs">{page} / {totalPages}</span>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="h-3 w-3" /></Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage(totalPages)}><ChevronsRight className="h-3 w-3" /></Button>
+              </div>
+            )}
+            <div id="review-changes-slot" />
+          </div>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <ResultsViewer result={result} error={error} loading={loading}
+            schema={activeTab.schema} table={activeTab.table}
+            onRefresh={fetchData}
+            connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
+            columnsMeta={columnsMeta[activeTab.id]}
+            enableCRUD={true} readOnly={readOnly}
+            onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)} />
         </div>
       </div>
+    );
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <DatabaseNavbar connectionId={connectionId || ""} activeView={activeView}
+        onOpenTables={openTablesTab} onOpenQuery={() => openQueryTab()} onOpenVisualizer={openVisualizerTab} />
+      <DbTabs tabs={tabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} onTabRename={renameTab} />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {renderContent()}
+        </div>
+      </div>
+    </div>
   );
 }
