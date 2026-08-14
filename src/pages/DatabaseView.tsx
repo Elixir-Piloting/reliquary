@@ -56,6 +56,7 @@ export default function DatabaseView() {
   const [pageSize, setPageSize] = useState(100);
   const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
   const [pkColumns, setPkColumns] = useState<Record<string, string[]>>({});
+  const [columnsMeta, setColumnsMeta] = useState<Record<string, ColumnInfo[]>>({});
   const [readOnly, setReadOnly] = useState(false);
 
   const activeTab = tableTabs.find(t => t.id === activeTabId);
@@ -135,11 +136,14 @@ export default function DatabaseView() {
 
   useEffect(() => {
     if (!connectionId || !activeTab) return;
-    if (pkColumns[activeTab.id]) return;
+    if (columnsMeta[activeTab.id]) return;
     invoke<ColumnInfo[]>("get_columns", { connectionId, schema: activeTab.schema, table: activeTab.table })
-      .then(cols => setPkColumns(prev => ({ ...prev, [activeTab.id]: cols.filter(c => c.isPrimaryKey).map(c => c.columnName) })))
+      .then(cols => {
+        setColumnsMeta(prev => ({ ...prev, [activeTab.id]: cols }));
+        setPkColumns(prev => ({ ...prev, [activeTab.id]: cols.filter(c => c.isPrimaryKey).map(c => c.columnName) }));
+      })
       .catch(console.error);
-  }, [connectionId, activeTab]);
+  }, [connectionId, activeTab, columnsMeta]);
 
   const fetchData = useCallback(async () => {
     if (!connectionId || !activeTab) return;
@@ -236,6 +240,7 @@ export default function DatabaseView() {
                     schema={activeTab.schema} table={activeTab.table}
                     onRefresh={fetchData}
                     connectionId={connectionId} pkColumns={pkColumns[activeTab.id] || []}
+                    columnsMeta={columnsMeta[activeTab.id]}
                     enableCRUD={true} readOnly={readOnly}
                     onAddColumn={() => openEditTab(activeTab.schema, activeTab.table)} />
                 </div>

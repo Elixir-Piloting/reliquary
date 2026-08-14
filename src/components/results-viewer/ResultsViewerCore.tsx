@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -16,9 +16,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult, ResultsViewerProps, PendingChange } from "./types";
 import { PAGE_SIZE_OPTIONS } from "./types";
 import { ReviewChangesSheet } from "./review-changes-sheet";
-import { InsertRowDialog } from "./insert-row-dialog";
+import { RowEditorPanel } from "./row-editor-panel";
 import { ConfirmDialog } from "./confirm-dialog";
-import { getInputType, formatValueForInput, toSqlParamValue, displayValueToString } from "./field-types";
+import { getInputType, toSqlParamValue, displayValueToString } from "./field-types";
 import { toCsv, toJson, downloadText } from "@/lib/export";
 import API, { type RowMutationStatement } from "@/lib/ipc-client";
 
@@ -42,73 +42,6 @@ function getSortOptions(dataType: string): { label: string; direction: 'asc' | '
   ];
 }
 
-function InlineSelect({ value, options, labels, onChange, onSave, onCancel }: {
-  value: string; options: string[]; labels?: string[];
-  onChange: (v: string) => void; onSave: (v: string) => void; onCancel: () => void;
-}) {
-  const [open, setOpen] = useState(true);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const ddRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0, maxHeight: 240 });
-
-  const measure = useCallback(() => {
-    const td = btnRef.current?.closest('td') as HTMLTableCellElement | null;
-    if (!td) return;
-    const r = td.getBoundingClientRect();
-    const estHeight = Math.min(options.length * 30 + 4, 320);
-    const spaceBelow = window.innerHeight - r.bottom - 8;
-    const spaceAbove = r.top - 8;
-    const showBelow = spaceBelow >= estHeight || spaceBelow >= spaceAbove;
-    setPos({
-      top: showBelow ? r.bottom + 1 : r.top - 1 - Math.min(estHeight, spaceAbove),
-      left: r.left,
-      width: r.width,
-      maxHeight: showBelow ? Math.min(320, spaceBelow) : Math.min(320, spaceAbove),
-    });
-  }, [options.length]);
-
-  useEffect(() => { if (open) measure(); }, [open, measure]);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || ddRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    document.addEventListener('mousedown', onDown);
-    return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-      document.removeEventListener('mousedown', onDown);
-    };
-  }, [open]);
-
-  return (
-    <>
-      <button ref={btnRef} autoFocus onClick={() => setOpen(o => !o)}
-        onKeyDown={e => { if (e.key === 'Enter') onSave(value); if (e.key === 'Escape') onCancel(); }}
-        className="w-full text-left bg-transparent border-0 p-0 m-0 text-foreground cursor-pointer text-sm">
-        {value === '' ? <span className="text-muted-foreground italic">NULL</span> : value}
-      </button>
-      {open && createPortal(
-        <div ref={ddRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 99999, maxHeight: pos.maxHeight, overflowY: 'auto' }}
-          className="bg-popover border border-border shadow-md text-sm rounded-none">
-          {options.map((opt, i) => (
-            <div key={opt} onMouseDown={(e) => { e.preventDefault(); onChange(opt); setOpen(false); onSave(opt); }}
-              className={cn("px-2 py-1.5 cursor-pointer select-none transition-colors",
-                opt === value ? "bg-primary/15 text-foreground font-medium" : "text-foreground hover:bg-accent hover:text-accent-foreground")}>
-              {labels ? labels[i] : (opt === '' ? <span className="text-muted-foreground italic">NULL</span> : opt)}
-            </div>
-          ))}
-        </div>, document.body)}
-    </>
-  );
-}
-
 function ResultsLoadingSkeleton() {
   return (
     <div className="flex flex-col h-full">
@@ -126,7 +59,7 @@ function ResultsLoadingSkeleton() {
 }
 
 export function ResultsViewer({
-  result, error, loading, schema, table, onRefresh, enableCRUD, readOnly, connectionId, pkColumns, onAddColumn
+  result, error, loading, schema, table, onRefresh, enableCRUD, readOnly, connectionId, pkColumns, columnsMeta, onAddColumn
 }: ResultsViewerProps) {
   const [internalPage, setInternalPage] = useState(1);
   const [internalPageSize, setInternalPageSize] = useState(100);
@@ -136,16 +69,11 @@ export function ResultsViewer({
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; col: string } | null>(null);
   const [sortDropdownCol, setSortDropdownCol] = useState<string | null>(null);
 
-  const [enumCache, setEnumCache] = useState<Record<string, string[] | null>>({});
-  const [enumLoading, setEnumLoading] = useState<Record<string, boolean>>({});
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
   const [showReviewSheet, setShowReviewSheet] = useState(false);
-  const [insertDialogOpen, setInsertDialogOpen] = useState(false);
+  const [editor, setEditor] = useState<{ mode: 'edit' | 'insert'; row: Record<string, unknown> | null } | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [localRows, setLocalRows] = useState<Record<string, unknown>[] | null>(null);
@@ -158,18 +86,6 @@ export function ResultsViewer({
   } : null, [displayResult]);
 
   useEffect(() => { setLocalRows(null); setPage(1); setSelectedRows(new Set()); }, [result]);
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      const table = (t as HTMLElement)?.closest('table');
-      if (table) return;
-      if (editingCell) (document.activeElement as HTMLElement)?.blur();
-      setSelectedCell(null);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [editingCell]);
 
   const sortedRows = useMemo(() => {
     if (!displayResult || !sortColumn) return displayResult?.rows || [];
@@ -221,44 +137,17 @@ export function ResultsViewer({
     else { setSortColumn(column); setSortDirection("asc"); }
   };
 
-  const copyCell = (value: any) => { navigator.clipboard.writeText(displayValueToString(value)); };
-
-  const handleCellDoubleClick = (rowIdxInSorted: number, col: string, dataType: string, value: unknown) => {
+  const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
-    const inputType = getInputType(dataType);
-    if (inputType === 'maybe-enum' && enumCache[dataType] === undefined && !enumLoading[dataType]) {
-      setEnumLoading(prev => ({ ...prev, [dataType]: true }));
-      setEditingCell({ rowIdx: rowIdxInSorted, col });
-      setEditValue(formatValueForInput(value, 'text'));
-      invoke<string[]>("get_enum_values", { connectionId, typeName: dataType })
-        .then(vals => { setEnumCache(prev => ({ ...prev, [dataType]: vals || [] })); setEnumLoading(prev => ({ ...prev, [dataType]: false })); })
-        .catch(() => { setEnumCache(prev => ({ ...prev, [dataType]: [] })); setEnumLoading(prev => ({ ...prev, [dataType]: false })); });
-      return;
-    }
-    setEditingCell({ rowIdx: rowIdxInSorted, col });
-    setEditValue(formatValueForInput(value, inputType));
+    setEditor({ mode: 'edit', row });
   };
 
-  const handleSaveEdit = (row: Record<string, unknown>, overrideValue?: string) => {
-    if (!editingCell || !canEdit || !schema || !table) return;
-    const colMeta = displayResult?.columns?.find(c => c.name === editingCell.col);
-    const inputType = getInputType(colMeta?.dataType || '');
-    const newVal = overrideValue !== undefined ? overrideValue : editValue;
-    if (newVal === formatValueForInput(row[editingCell.col], inputType)) { setEditingCell(null); return; }
-    const change: PendingChange = {
-      id: `${schema}.${table}.${editingCell.col}-${Date.now()}`,
-      schema, table,
-      columnName: editingCell.col,
-      dataType: colMeta?.dataType || '',
-      pkValues: getPkValues(row),
-      originalValue: row[editingCell.col],
-      newValue: newVal,
-    };
-    setPendingChanges(prev => [...prev, change]);
-    setEditingCell(null);
-  };
+  const handleOpenInsert = () => setEditor({ mode: 'insert', row: null });
 
-  const handleCancelEdit = () => setEditingCell(null);
+  const handleStageRowEdits = (changes: PendingChange[]) => {
+    setPendingChanges(prev => [...prev, ...changes]);
+    toast.info(`${changes.length} change${changes.length !== 1 ? 's' : ''} staged — review & apply to commit`);
+  };
 
   const handleUnstage = (id: string) => setPendingChanges(prev => prev.filter(c => c.id !== id));
 
@@ -398,7 +287,8 @@ export function ResultsViewer({
   const handlePageSizeChange = (newSize: number) => { setPageSize(newSize); setPage(1); setPageSizePopoverOpen(false); };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full">
+      <div className="flex min-w-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-border bg-card/80 backdrop-blur-sm px-4 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
@@ -408,7 +298,7 @@ export function ResultsViewer({
           </div>
           {canEdit && (
             <div className="flex items-center gap-1.5">
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setInsertDialogOpen(true)}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={handleOpenInsert}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10" disabled={selectedRows.size === 0} onClick={() => setDeleteDialogOpen(true)}>
                 <Trash2 className="h-3.5 w-3.5" />Delete Selected ({selectedRows.size})
               </Button>
@@ -480,47 +370,18 @@ export function ResultsViewer({
                   const isSelected = selectedRows.has(actualIndex);
                   const pendingDelete = isPendingDelete(row);
                   return (
-                    <TableRow key={`row-${actualIndex}`} className={cn("hover:bg-transparent", pendingDelete && "opacity-40")} data-state={isSelected ? "selected" : undefined}>
-                      <TableCell className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
+                    <TableRow key={`row-${actualIndex}`} className={cn("hover:bg-transparent", pendingDelete && "opacity-40", canEdit && "cursor-pointer")} data-state={isSelected ? "selected" : undefined} onClick={() => handleRowClick(row)}>
+                      <TableCell onClick={(e) => e.stopPropagation()} className="sticky left-0 z-20 bg-background pl-8 pr-8 border-r border-border" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={isSelected} onCheckedChange={() => toggleRowSelect(actualIndex)} /></TableCell>
                       {(displayResult.columns || []).map((field, colIdx) => {
                         const value = row[field.name]; const isNull = value === null;
-                        const isEditing = editingCell?.rowIdx === actualIndex && editingCell?.col === field.name;
-                        const isSelectedCell = selectedCell?.rowIdx === actualIndex && selectedCell?.col === field.name;
                         const change = getChangeForCell(row, field.name);
                         const displayValue = change ? change.newValue : value;
                         const showNull = displayValue === null;
-                        const inputType = getInputType(field.dataType);
-                        const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
                         return (<TableCell key={field.name}
-                          className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
+                          className={cn("min-w-[140px] max-w-[300px] truncate relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", pendingDelete && "line-through")}
                           style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
-                          onDoubleClick={(e) => { e.stopPropagation(); if (!pendingDelete) handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
-                          onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); copyCell(value); }} title={showNull ? "NULL" : displayValueToString(displayValue)}>
-                          {isEditing ? (inputType === 'select-boolean' ? (
-                            <InlineSelect
-                              value={editValue} options={['true', 'false', '']} labels={['true', 'false', 'NULL']}
-                              onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
-                            />
-                          ) : enumVals && enumVals.length > 0 ? (
-                            <InlineSelect
-                              value={editValue} options={[...enumVals, '']}
-                              onChange={setEditValue} onSave={(v) => handleSaveEdit(row, v)} onCancel={handleCancelEdit}
-                            />
-                          ) : inputType === 'maybe-enum' && enumLoading[field.dataType] ? (
-                            <span className="text-muted-foreground italic">Loading...</span>
-                          ) : (
-                            <input
-                              type={inputType === 'maybe-enum' ? 'text' : inputType}
-                              value={editValue}
-                              onChange={e => setEditValue(e.target.value)}
-                              onBlur={() => handleSaveEdit(row)}
-                              onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit(row); if (e.key === 'Escape') handleCancelEdit(); }}
-                              autoFocus
-                              className="w-full bg-transparent border-0 outline-none focus:outline-none focus:ring-0 p-0 m-0 text-foreground text-xs"
-                            />
-                          )) : (
-                            <span>{showNull ? "NULL" : displayValueToString(displayValue)}</span>
-                          )}
+                          title={showNull ? "NULL" : displayValueToString(displayValue)}>
+                          <span>{showNull ? "NULL" : displayValueToString(displayValue)}</span>
                         </TableCell>);
                       })}
                       {canEdit && onAddColumn && <TableCell className="p-0" />}
@@ -604,13 +465,20 @@ export function ResultsViewer({
         <ReviewChangesSheet open={showReviewSheet} onOpenChange={setShowReviewSheet}
           changes={pendingChanges} onUnstage={handleUnstage} onApplyAll={handleApplyAll} applying={applying} />
       )}
-      {canEdit && displayResult && (
-        <InsertRowDialog
-          open={insertDialogOpen} onOpenChange={setInsertDialogOpen}
+      </div>
+      {canEdit && editor && (
+        <RowEditorPanel
+          open={!!editor}
+          mode={editor.mode}
           connectionId={connectionId || ''} schema={schema || ''} table={table || ''}
-          columns={(displayResult.columns || []).map(c => ({ name: c.name, dataType: c.dataType }))}
+          columns={(columnsMeta && columnsMeta.length > 0 ? columnsMeta : (displayResult.columns || []).map(c => ({
+            columnName: c.name, dataType: c.dataType, isNullable: true, isPrimaryKey: pkColumns?.includes(c.name) || false, defaultValue: null,
+          })))}
           pkColumns={pkColumns || []}
-          onSubmit={handleInsertSubmit}
+          row={editor.row}
+          onClose={() => setEditor(null)}
+          onStageEdit={handleStageRowEdits}
+          onStageInsert={handleInsertSubmit}
         />
       )}
       {canEdit && (

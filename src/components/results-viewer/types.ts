@@ -1,4 +1,5 @@
 import type { QueryResult as DBQueryResult, RowMutationStatement } from "@/lib/db/types";
+import type { ColumnInfo } from "@/lib/ipc-client";
 
 export type QueryResult = DBQueryResult;
 
@@ -18,6 +19,8 @@ export interface ResultsViewerProps {
   showPagination?: boolean;
   connectionId?: string;
   pkColumns?: string[];
+  /** Full column metadata (incl. nullability) used by the row editor panel. */
+  columnsMeta?: ColumnInfo[];
   onAddColumn?: () => void;
 }
 
