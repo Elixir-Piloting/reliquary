@@ -327,14 +327,14 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
                 <div key={col.columnName} className="space-y-1.5">
                   <Label className="text-xs flex items-center gap-1.5 text-muted-foreground">
                     <span className="font-mono">{col.columnName}</span>
-                    {isRequired(col) && (
-                      <span className="rounded bg-destructive/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-destructive">Required</span>
-                    )}
                     {disabled && (
                       <span className="rounded bg-muted px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Auto</span>
                     )}
                     <span className="text-muted-foreground/60 font-normal truncate">{col.dataType}</span>
                     {pkSet.has(col.columnName) && <KeyRound className="h-3 w-3 shrink-0 text-amber-500/70" />}
+                    {isRequired(col) && (
+                      <span className="ml-auto rounded bg-destructive/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-destructive">Required</span>
+                    )}
                   </Label>
                   <FieldControl
                     column={col}
