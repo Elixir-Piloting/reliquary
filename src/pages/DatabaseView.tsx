@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { DatabaseNavbar } from "@/components/database-navbar";
 import { DbTabs } from "@/components/db-tabs";
@@ -22,6 +22,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000];
+const EMPTY_FILTERS: TableFilter[] = [];
+const EMPTY_HIDDEN: Set<string> = new Set();
 
 export default function DatabaseView() {
   const { connection: connectionId } = useParams<{ connection: string }>();
@@ -51,8 +53,8 @@ export default function DatabaseView() {
   const activeTab = tabs.find(t => t.id === activeTabId);
 
   const sort = activeTab ? (sortByTab[activeTab.id] ?? null) : null;
-  const filters = activeTab ? (filtersByTab[activeTab.id] ?? []) : [];
-  const hiddenColumns = activeTab ? (hiddenByTab[activeTab.id] ?? new Set<string>()) : new Set<string>();
+  const filters = useMemo(() => (activeTab ? (filtersByTab[activeTab.id] ?? EMPTY_FILTERS) : EMPTY_FILTERS), [activeTab, filtersByTab]);
+  const hiddenColumns = useMemo(() => (activeTab ? (hiddenByTab[activeTab.id] ?? EMPTY_HIDDEN) : EMPTY_HIDDEN), [activeTab, hiddenByTab]);
 
   // Schedule auto-refresh for the active table when enabled.
   useEffect(() => {
