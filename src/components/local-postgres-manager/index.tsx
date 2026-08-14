@@ -82,6 +82,13 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
 
     setLoadingDb(key);
     try {
+      // DEBUG: log what we're about to send so the user can capture it.
+      console.log("[local-pg] listLocalDatabases payload:", {
+        host: passwordForServer.host,
+        port: passwordForServer.port,
+        user: tempUser,
+        password: tempPassword,
+      });
       const dbs = await loadDatabases.mutateAsync({ host: passwordForServer.host, port: passwordForServer.port, user: tempUser, password: tempPassword });
       setDatabases(prev => ({ ...prev, [key]: dbs }));
       // Only persist credentials after a successful connection.

@@ -416,6 +416,7 @@ fn local_pg_conn_str(host: &str, port: u16, user: Option<String>, password: Opti
 #[tauri::command]
 pub async fn list_local_databases(host: String, port: u16, user: Option<String>, password: Option<String>, _state: tauri::State<'_, AppState>) -> Result<Vec<LocalPgDatabase>, String> {
     let conn_str = local_pg_conn_str(&host, port, user, password);
+    eprintln!("[local-pg] conn_str = {}", conn_str);
     let (client, connection) = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await
         .map_err(|_| "Timed out (5s)".to_string())?
         .map_err(|e| format!("connect: {}", e))?;
