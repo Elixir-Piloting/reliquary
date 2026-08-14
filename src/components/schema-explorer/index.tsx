@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SchemaSelector } from "./SchemaSelector";
 import { TableSearch } from "./TableSearch";
 import { TableList } from "./TableList";
-import { onBranchSwitched } from "@/lib/branch-events";
+import { onBranchSwitched, onSchemaChanged } from "@/lib/branch-events";
 import type { Table } from "./types";
 import type { SchemaInfo } from "@/lib/db/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -66,6 +66,11 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
       loadTables();
     });
   }, [loadSchemas, loadTables]);
+
+  // Refresh the table list when tables are created/altered/dropped elsewhere.
+  useEffect(() => {
+    return onSchemaChanged(loadTables);
+  }, [loadTables]);
 
   if (!connectionId) return <div className="p-4 text-sm text-muted-foreground">Connect to a database to view schemas</div>;
   if (schemasLoading && schemas.length === 0) return <SchemaExplorerLoadingState />;

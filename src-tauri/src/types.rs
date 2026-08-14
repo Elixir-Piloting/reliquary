@@ -106,6 +106,7 @@ pub struct ColumnInfo {
     pub is_primary_key: bool,
     pub default_value: Option<String>,
     pub max_length: Option<i32>,
+    pub is_identity: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -444,7 +444,8 @@ const COLUMN_LIST_SQL: &str =
             COALESCE((SELECT true FROM pg_index i \
                       WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)), false) AS is_primary_key, \
             pg_get_expr(d.adbin, d.adrelid) AS default_value, \
-            CASE WHEN a.atttypid IN (18, 1042, 1043) AND a.atttypmod > 4 THEN a.atttypmod - 4 ELSE NULL END AS max_length \
+            CASE WHEN a.atttypid IN (18, 1042, 1043) AND a.atttypmod > 4 THEN a.atttypmod - 4 ELSE NULL END AS max_length, \
+            a.attidentity <> '' AS is_identity \
      FROM pg_attribute a \
      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
      WHERE a.attrelid = (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
@@ -462,6 +463,7 @@ pub async fn pg_get_columns(client: &PgClient, schema: &str, table: &str) -> Res
         is_primary_key: r.get(3),
         default_value: r.get::<_, Option<String>>(4),
         max_length: r.get(5),
+        is_identity: r.get(6),
     }).collect())
 }
 

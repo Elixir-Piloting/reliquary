@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import { dispatchSchemaChanged } from "@/lib/branch-events";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -290,6 +291,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     try {
       await invoke("execute_query", { connectionId, query: buildCreateSQL(), options: { confirmDestructive: true, readOnly: false } });
       toast.success(`Table "${tableName}" created`);
+      dispatchSchemaChanged();
       onCreated?.(schema, tableName);
     } catch (e: any) {
       toast.error("Failed to create table", { description: String(e) });

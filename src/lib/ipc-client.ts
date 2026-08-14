@@ -73,6 +73,7 @@ export interface ColumnInfo {
   isPrimaryKey: boolean;
   defaultValue: string | null;
   maxLength?: number | null;
+  isIdentity?: boolean;
 }
 
 export interface IndexInfo {
