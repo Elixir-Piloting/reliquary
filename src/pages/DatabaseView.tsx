@@ -223,7 +223,7 @@ export default function DatabaseView() {
         executionTimeMs: 0,
       });
       setTotalCount(data.totalCount);
-      hasLoadedRef.current = true;
+      loadedTabRef.current = activeTab.id;
     } catch (e: any) {
       if (!silent) {
         setError(String(e));
@@ -238,10 +238,14 @@ export default function DatabaseView() {
   const fetchDataRef = useRef(fetchData);
   fetchDataRef.current = fetchData;
 
-  // Re-fetch on sort/filter/page changes without blanking the grid: once data
-  // has loaded, keep the old rows visible until the new result arrives.
-  const hasLoadedRef = useRef(false);
-  useEffect(() => { fetchData(hasLoadedRef.current); }, [fetchData]);
+  // Re-fetch on sort/filter/page changes without blanking the grid — but only
+  // within the SAME table. Switching tables must show the new table's content,
+  // so it fetches non-silently (loading state) instead of showing stale rows.
+  const loadedTabRef = useRef<string | null>(null);
+  useEffect(() => {
+    const sameTab = loadedTabRef.current !== null && loadedTabRef.current === activeTab?.id;
+    fetchData(sameTab);
+  }, [fetchData, activeTab?.id]);
 
   const cycleSort = useCallback((column: string) => {
     if (!activeTab) return;
