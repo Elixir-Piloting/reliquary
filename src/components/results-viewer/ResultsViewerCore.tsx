@@ -18,6 +18,7 @@ import { PAGE_SIZE_OPTIONS } from "./types";
 import { ReviewChangesSheet } from "./review-changes-sheet";
 import { RowEditorPanel } from "./row-editor-panel";
 import { ConfirmDialog } from "./confirm-dialog";
+import { useRightSidebar } from "@/components/right-sidebar-context";
 import { getInputType, formatValueForInput, toSqlParamValue, displayValueToString } from "./field-types";
 import { toCsv, toJson, downloadText } from "@/lib/export";
 import API, { type RowMutationStatement } from "@/lib/ipc-client";
@@ -149,8 +150,37 @@ export function ResultsViewer({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [localRows, setLocalRows] = useState<Record<string, unknown>[] | null>(null);
+  const rightSidebar = useRightSidebar();
+
   const canEdit = enableCRUD && !readOnly && schema && table && pkColumns && pkColumns.length > 0 && connectionId;
   const displayResult = localRows ? { ...result, rows: localRows } : result;
+
+  // Drive the top-level right sidebar from the local editor state. The panel
+  // itself is rendered into the sidebar by `MainLayout` via the context.
+  useEffect(() => {
+    if (!editor || !canEdit || !schema || !table || !connectionId) {
+      rightSidebar.closeRight();
+      return;
+    }
+    rightSidebar.openRight(
+      <RowEditorPanel
+        open
+        mode={editor.mode}
+        connectionId={connectionId}
+        schema={schema}
+        table={table}
+        columns={(columnsMeta && columnsMeta.length > 0 ? columnsMeta : (displayResult?.columns || []).map(c => ({
+          columnName: c.name, dataType: c.dataType, isNullable: true, isPrimaryKey: pkColumns?.includes(c.name) || false, defaultValue: null,
+        })))}
+        pkColumns={pkColumns || []}
+        row={editor.row}
+        onClose={() => { rightSidebar.closeRight(); setEditor(null); }}
+        onStageEdit={handleStageRowEdits}
+        onStageInsert={handleInsertSubmit}
+      />
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, canEdit, schema, table, connectionId, columnsMeta, pkColumns]);
 
   const exportResult = useMemo(() => displayResult ? {
     columns: displayResult.columns || [],
@@ -158,6 +188,12 @@ export function ResultsViewer({
   } : null, [displayResult]);
 
   useEffect(() => { setLocalRows(null); setPage(1); setSelectedRows(new Set()); }, [result]);
+
+  // Close the right sidebar if this grid unmounts while the editor is open.
+  useEffect(() => {
+    return () => rightSidebar.closeRight();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const sortedRows = useMemo(() => {
     if (!displayResult || !sortColumn) return displayResult?.rows || [];
@@ -252,7 +288,6 @@ export function ResultsViewer({
   const handleCancelEdit = () => setEditingCell(null);
 
   const handleOpenInsert = () => setEditor({ mode: 'insert', row: null });
-
   const handleStageRowEdits = (changes: PendingChange[]) => {
     setPendingChanges(prev => [...prev, ...changes]);
     toast.info(`${changes.length} change${changes.length !== 1 ? 's' : ''} staged — review & apply to commit`);
@@ -396,8 +431,7 @@ export function ResultsViewer({
   const handlePageSizeChange = (newSize: number) => { setPageSize(newSize); setPage(1); setPageSizePopoverOpen(false); };
 
   return (
-    <div className="flex h-full">
-      <div className="flex min-w-0 flex-1 flex-col">
+    <div className="flex h-full flex-col">
       <div className="shrink-0 border-b border-border bg-card/80 backdrop-blur-sm px-4 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
@@ -602,22 +636,6 @@ export function ResultsViewer({
       {canEdit && (
         <ReviewChangesSheet open={showReviewSheet} onOpenChange={setShowReviewSheet}
           changes={pendingChanges} onUnstage={handleUnstage} onApplyAll={handleApplyAll} applying={applying} />
-      )}
-      </div>
-      {canEdit && editor && (
-        <RowEditorPanel
-          open={!!editor}
-          mode={editor.mode}
-          connectionId={connectionId || ''} schema={schema || ''} table={table || ''}
-          columns={(columnsMeta && columnsMeta.length > 0 ? columnsMeta : (displayResult.columns || []).map(c => ({
-            columnName: c.name, dataType: c.dataType, isNullable: true, isPrimaryKey: pkColumns?.includes(c.name) || false, defaultValue: null,
-          })))}
-          pkColumns={pkColumns || []}
-          row={editor.row}
-          onClose={() => setEditor(null)}
-          onStageEdit={handleStageRowEdits}
-          onStageInsert={handleInsertSubmit}
-        />
       )}
       {canEdit && (
         <ConfirmDialog

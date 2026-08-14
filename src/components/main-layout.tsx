@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { SchemaExplorer } from "@/components/schema-explorer";
 import { SidebarProvider, useSidebar } from "@/components/sidebar-context";
+import { RightSidebarProvider, useRightSidebar } from "@/components/right-sidebar-context";
+import { RightSidebar } from "@/components/right-sidebar";
 import { cn } from "@/lib/utils";
 import { getSubtleBackground } from "@/lib/utils/color";
 import { Button } from "@/components/ui/button";
@@ -33,6 +35,7 @@ function ProviderIcon({ provider }: { provider: string }) {
 function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const { collapsed: sidebarCollapsed } = useSidebar();
+  const rightSidebar = useRightSidebar();
   const [connectionsPopoverOpen, setConnectionsPopoverOpen] = useState(false);
   const [currentConnection, setCurrentConnection] = useState<Connection | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -128,10 +131,19 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         {children}
       </div>
+      <RightSidebar open={rightSidebar.open} widthClass="w-[380px]">
+        {rightSidebar.content}
+      </RightSidebar>
     </div>
   );
 }
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  return <SidebarProvider><MainLayoutContent>{children}</MainLayoutContent></SidebarProvider>;
+  return (
+    <SidebarProvider>
+      <RightSidebarProvider>
+        <MainLayoutContent>{children}</MainLayoutContent>
+      </RightSidebarProvider>
+    </SidebarProvider>
+  );
 }

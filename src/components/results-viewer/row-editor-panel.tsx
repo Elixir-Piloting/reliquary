@@ -185,7 +185,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
   };
 
   return (
-    <aside className="flex h-full w-[360px] shrink-0 flex-col border-l border-border bg-background">
+    <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <div className="min-w-0">
           <p className="text-sm font-semibold leading-tight">{mode === 'edit' ? 'Edit Row' : 'Insert Row'}</p>
@@ -223,6 +223,6 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
           {mode === 'edit' ? 'Stage Changes' : 'Stage Insert'}
         </Button>
       </div>
-    </aside>
+    </div>
   );
 }
