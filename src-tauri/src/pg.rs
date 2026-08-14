@@ -55,7 +55,10 @@ pub fn parse_pg_url(url: &str) -> Result<UrlParts, String> {
     for param in query.split('&').filter(|p| !p.is_empty()) {
         let (key, value) = param.split_once('=').unwrap_or((param, ""));
         match key {
-            "sslmode" => sslmode = urlencoding_or_raw(value),
+            "sslmode" => {
+                let v = urlencoding_or_raw(value);
+                sslmode = if v.is_empty() { "prefer".to_string() } else { v };
+            }
             "sslrootcert" => ssl_root_cert = urlencoding_or_raw(value),
             _ => {}
         }
@@ -190,8 +193,11 @@ pub enum PgTls {
 ///   certificate verification" semantics.
 /// - `verify-ca`/`verify-full` -> native TLS with certificate verification on
 ///   (the OS trust store, SChannel on Windows).
+/// - empty/omitted -> treated as `prefer` (libpq's default), so a URL with a
+///   bare `?sslmode=` doesn't hard-fail the connection.
 pub fn build_tls(sslmode: &str) -> Result<PgTls, String> {
-    match sslmode {
+    let mode = if sslmode.is_empty() { "prefer" } else { sslmode };
+    match mode {
         "disable" => Ok(PgTls::None(NoTls)),
         "require" | "prefer" => {
             let connector = native_tls::TlsConnector::builder()

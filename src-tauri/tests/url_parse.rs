@@ -1,3 +1,4 @@
+use relic_lib::build_tls;
 use relic_lib::detect_provider;
 use relic_lib::parse_pg_connstr;
 use relic_lib::parse_pg_url;
@@ -27,6 +28,17 @@ fn sslmode_defaults_to_prefer_when_absent() {
 fn sslmode_disable_is_extracted() {
     let parts = parse_pg_url(&url("user:pass@host:5432/db?sslmode=disable")).unwrap();
     assert_eq!(parts.sslmode, "disable");
+}
+
+#[test]
+fn sslmode_empty_value_defaults_to_prefer() {
+    let parts = parse_pg_url(&url("user:pass@host:5432/db?sslmode=")).unwrap();
+    assert_eq!(parts.sslmode, "prefer");
+    let parts = parse_pg_url(&url("user:pass@host:5432/db?sslmode=&channel_binding=require")).unwrap();
+    assert_eq!(parts.sslmode, "prefer");
+    let connstr = parse_pg_connstr(&url("user:pass@host:5432/db?sslmode=&channel_binding=require")).unwrap();
+    assert!(connstr.contains("sslmode=prefer"), "connstr: {connstr}");
+    assert!(build_tls(&parts.sslmode).is_ok(), "empty sslmode must not hard-fail build_tls");
 }
 
 #[test]
