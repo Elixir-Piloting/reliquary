@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { SchemaExplorer } from "@/components/schema-explorer";
 import { SidebarProvider, useSidebar } from "@/components/sidebar-context";
 import { RightSidebarProvider, useRightSidebar } from "@/components/right-sidebar-context";
@@ -34,6 +34,7 @@ function ProviderIcon({ provider }: { provider: string }) {
 
 function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const { connection: urlConnectionId } = useParams<{ connection: string }>();
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar, width: sidebarWidth, setWidth: setSidebarWidth } = useSidebar();
   const rightSidebar = useRightSidebar();
   const [connectionsPopoverOpen, setConnectionsPopoverOpen] = useState(false);
@@ -44,12 +45,19 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const { data: connections = [] } = useConnections();
   const connectMutation = useConnect();
 
+  // Match the sidebar's active connection to the one in the URL, falling back
+  // to the first saved connection. Without this, opening a connection from the
+  // Home screen showed the wrong connection's schemas (or none).
   useEffect(() => {
     setCurrentConnection(prev => {
-      if (!prev) return connections[0] ?? null;
-      return connections.find(c => c.id === prev.id) ?? connections[0] ?? null;
+      if (urlConnectionId) {
+        const fromUrl = connections.find(c => c.id === urlConnectionId);
+        if (fromUrl) return fromUrl;
+      }
+      if (prev) return connections.find(c => c.id === prev.id) ?? connections[0] ?? null;
+      return connections[0] ?? null;
     });
-  }, [connections]);
+  }, [connections, urlConnectionId]);
 
   const handleConnectionSelect = async (conn: Connection) => {
     setConnecting(true);
