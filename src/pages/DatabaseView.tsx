@@ -44,11 +44,15 @@ export default function DatabaseView() {
   const [readOnly, setReadOnly] = useState(false);
   const [autoRefreshMs, setAutoRefreshMs] = useState<number | null>(null);
   const [autoRefreshOpen, setAutoRefreshOpen] = useState(false);
-  const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
-  const [filters, setFilters] = useState<TableFilter[]>([]);
-  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [sortByTab, setSortByTab] = useState<Record<string, { column: string; direction: "asc" | "desc" } | null>>({});
+  const [filtersByTab, setFiltersByTab] = useState<Record<string, TableFilter[]>>({});
+  const [hiddenByTab, setHiddenByTab] = useState<Record<string, Set<string>>>({});
 
   const activeTab = tabs.find(t => t.id === activeTabId);
+
+  const sort = activeTab ? (sortByTab[activeTab.id] ?? null) : null;
+  const filters = activeTab ? (filtersByTab[activeTab.id] ?? []) : [];
+  const hiddenColumns = activeTab ? (hiddenByTab[activeTab.id] ?? new Set<string>()) : new Set<string>();
 
   // Schedule auto-refresh for the active table when enabled.
   useEffect(() => {
@@ -238,26 +242,32 @@ export default function DatabaseView() {
   useEffect(() => { fetchData(hasLoadedRef.current); }, [fetchData]);
 
   const cycleSort = useCallback((column: string) => {
-    setSort(prev => {
-      if (!prev || prev.column !== column) return { column, direction: "asc" };
-      if (prev.direction === "asc") return { column, direction: "desc" };
-      return null;
+    if (!activeTab) return;
+    const tabId = activeTab.id;
+    setSortByTab(prev => {
+      const cur = prev[tabId] ?? null;
+      if (!cur || cur.column !== column) return { ...prev, [tabId]: { column, direction: "asc" } };
+      if (cur.direction === "asc") return { ...prev, [tabId]: { column, direction: "desc" } };
+      return { ...prev, [tabId]: null };
     });
     setPage(1);
-  }, []);
+  }, [activeTab]);
 
   const applyFilters = useCallback((next: TableFilter[]) => {
-    setFilters(next);
+    if (!activeTab) return;
+    setFiltersByTab(prev => ({ ...prev, [activeTab.id]: next }));
     setPage(1);
-  }, []);
+  }, [activeTab]);
 
   const toggleColumn = useCallback((column: string) => {
-    setHiddenColumns(prev => {
-      const next = new Set(prev);
-      if (next.has(column)) next.delete(column); else next.add(column);
-      return next;
+    if (!activeTab) return;
+    const tabId = activeTab.id;
+    setHiddenByTab(prev => {
+      const cur = new Set(prev[tabId] ?? []);
+      if (cur.has(column)) cur.delete(column); else cur.add(column);
+      return { ...prev, [tabId]: cur };
     });
-  }, []);
+  }, [activeTab]);
 
   const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 0;
   const activeView = activeTab?.kind === "query" ? "query" : activeTab?.kind === "visualizer" ? "visualizer" : "tables";
@@ -354,7 +364,7 @@ export default function DatabaseView() {
               return (
                 <div className="flex items-center gap-1">
                   <FilterPopover columns={cols} filters={filters} onApply={applyFilters} />
-                  <ColumnsPopover columns={cols} hidden={hiddenColumns} onToggle={toggleColumn} onSetHidden={s => setHiddenColumns(s)} />
+                  <ColumnsPopover columns={cols} hidden={hiddenColumns} onToggle={toggleColumn} onSetHidden={s => { if (activeTab) setHiddenByTab(prev => ({ ...prev, [activeTab.id]: new Set(s) })); }} />
                 </div>
               );
             })()}
