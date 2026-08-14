@@ -28,6 +28,27 @@ export function getInputType(dataType: string): string {
   return 'text';
 }
 
+const NUMERIC_RE = /^(int\d?|integer|smallint|bigint|serial|bigserial|smallserial|float\d?|real|double|numeric|decimal|money|oid)\b/;
+const TEXTAREA_RE = /^(text|varchar|char|character|bpchar|name|json|jsonb|xml|tsvector|tsquery|uuid|inet|cidr|macaddr|interval|bytea|point|line|lseg|box|path|polygon|circle)\b/;
+
+/** Types edited with a numeric `<input type="number">`. */
+export function isNumericType(dataType: string): boolean {
+  const dt = dataType.toLowerCase();
+  return NUMERIC_RE.test(dt);
+}
+
+/**
+ * Types edited with a multi-line `<textarea>`: long free-form text, JSON/JSONB,
+ * and any custom/unrecognized type (enums are handled by the select before this).
+ */
+export function isTextareaType(dataType: string): boolean {
+  const dt = dataType.toLowerCase();
+  if (isNumericType(dt) || dt === 'boolean' || dt === 'bool') return false;
+  if (dt.includes('date') || dt.includes('timestamp') || dt.includes('time')) return false;
+  if (isPotentialEnum(dt)) return true;
+  return TEXTAREA_RE.test(dt);
+}
+
 export function formatValueForInput(value: unknown, inputType: string): string {
   if (value === null) return '';
   const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -49,14 +70,12 @@ export function displayValueToString(value: unknown): string {
   return String(value);
 }
 
-const NUMERIC_RE = /^int|float|numeric|decimal|serial|real|double|money/;
-
 /** Convert a raw input string ('' = null) to the JSON value sent to the backend. */
 export function toSqlParamValue(raw: string | null, dataType: string): unknown {
   const val = raw === null ? '' : raw;
   if (val === '') return null;
   const dt = dataType.toLowerCase();
   if (dt === 'boolean' || dt === 'bool') return val === 'true';
-  if (NUMERIC_RE.test(dt)) return Number(val);
+  if (isNumericType(dt)) return Number(val);
   return val;
 }

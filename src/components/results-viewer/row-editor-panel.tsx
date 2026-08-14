@@ -2,11 +2,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, KeyRound, ChevronRight } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { getInputType, isPotentialEnum, toSqlParamValue, formatValueForInput, displayValueToString } from "./field-types";
+import { getInputType, isPotentialEnum, isNumericType, isTextareaType, toSqlParamValue, formatValueForInput, displayValueToString } from "./field-types";
 import type { RowMutationStatement } from "@/lib/db/types";
 import type { ColumnInfo } from "@/lib/ipc-client";
 import { cn } from "@/lib/utils";
@@ -76,6 +77,16 @@ function FieldControl({ column, value, enumValues, onValue }: {
     );
   }
   const type = inputType === 'date' ? 'date' : inputType === 'datetime-local' ? 'datetime-local' : 'text';
+  if (isNumericType(column.dataType)) {
+    return (
+      <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-8 font-mono text-xs" type="number" inputMode="decimal" />
+    );
+  }
+  if (isTextareaType(column.dataType)) {
+    return (
+      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="min-h-[72px] font-mono text-xs" rows={3} />
+    );
+  }
   return (
     <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-8 font-mono text-xs" type={type} />
   );
