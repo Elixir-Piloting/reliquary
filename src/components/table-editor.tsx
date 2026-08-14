@@ -1,12 +1,15 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, X, Loader2, Save, ArrowLeft, Check, ChevronUp, ChevronDown, KeyRound } from "lucide-react";
+import { Plus, X, Loader2, Save, ArrowLeft, Check, ChevronUp, ChevronDown, KeyRound, GripVertical } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ColumnInfo, TableInfo } from "@/lib/db/types";
 import { useRightSidebar } from "@/components/right-sidebar-context";
@@ -52,6 +55,85 @@ const emptyColumn = (): NewColumn => ({ id: nextId(), name: "", type: "TEXT", nu
 
 const emptyFk = (schema: string): ForeignKeyDraft => ({ column: "", refSchema: schema, refTable: "", refColumn: "", onDelete: "NO ACTION", onUpdate: "NO ACTION" });
 
+interface ColumnRowProps {
+  col: NewColumn;
+  index: number;
+  total: number;
+  isCreate: boolean;
+  saving: boolean;
+  onUpdate: (i: number, field: keyof NewColumn, value: any) => void;
+  onMove: (i: number, dir: -1 | 1) => void;
+  onRemove: (i: number) => void;
+  onAddColumn: (col: NewColumn) => void;
+}
+
+/** A sortable column row using @dnd-kit; reordering animates via its built-in
+ *  sortable transitions. The chevrons also call onMove, which reorders the
+ *  array and lets dnd-kit animate the swap. */
+function ColumnRow({ col, index, total, isCreate, saving, onUpdate, onMove, onRemove, onAddColumn }: ColumnRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: col.id });
+  const isLast = index === total - 1;
+  const isFirst = index === 0;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className={COL_GRID + " grid items-center gap-2 py-1 text-sm"}>
+      {/* # with drag handle + stacked up/down chevrons */}
+      <div className={cellClass + " flex flex-col items-center"}>
+        <button {...attributes} {...listeners} className="p-0.5 rounded hover:bg-accent text-muted-foreground cursor-grab active:cursor-grabbing" title="Drag to reorder">
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={() => onMove(index, -1)} disabled={isFirst}
+          className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move up">
+          <ChevronUp className="h-3 w-3" />
+        </button>
+        <span className="text-xs text-muted-foreground tabular-nums leading-tight">{index + 1}</span>
+        <button onClick={() => onMove(index, 1)} disabled={isLast}
+          className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move down">
+          <ChevronDown className="h-3 w-3" />
+        </button>
+      </div>
+      <div className={cellClass}>
+        <Input value={col.name} onChange={e => onUpdate(index, "name", e.target.value)} placeholder="column_name" className="h-8 text-sm" />
+      </div>
+      <div className={cellClass}>
+        <Select value={col.type} onValueChange={v => onUpdate(index, "type", v)}>
+          <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
+          <SelectContent>{COLUMN_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <div className={cellClass}>
+        <Input value={col.defaultValue} onChange={e => onUpdate(index, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
+      </div>
+      <div className={cellClass + " flex items-center gap-3"}>
+        <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Primary key">
+          <Checkbox checked={col.primaryKey} onCheckedChange={(v) => { onUpdate(index, "primaryKey", !!v); if (v) onUpdate(index, "nullable", false); }} />PK
+        </label>
+        <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Auto increment">
+          <Checkbox checked={col.autoIncrement} onCheckedChange={(v) => onUpdate(index, "autoIncrement", !!v)} />AI
+        </label>
+        <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Unique">
+          <Checkbox checked={col.unique} onCheckedChange={(v) => onUpdate(index, "unique", !!v)} />UQ
+        </label>
+        <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Nullable">
+          <Checkbox checked={col.nullable} onCheckedChange={(v) => onUpdate(index, "nullable", !!v)} disabled={col.primaryKey} />Null
+        </label>
+      </div>
+      <div className={cellClass + " flex items-center justify-end gap-1"}>
+        {!isCreate && (
+          <Button size="sm" onClick={() => onAddColumn(col)} disabled={saving || !col.name.trim()} className="h-7" title="Add this column">
+            <Check className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        <Button variant="ghost" size="icon" onClick={() => onRemove(index)} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Remove column"><X className="h-4 w-4" /></Button>
+      </div>
+    </div>
+  );
+}
+
 interface TableEditorProps {
   mode: "create" | "edit";
   schema: string;
@@ -79,9 +161,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const [fkForm, setFkForm] = useState<ForeignKeyDraft>(() => emptyFk(schema));
   const [refTables, setRefTables] = useState<TableInfo[]>([]);
   const [refColumns, setRefColumns] = useState<ColumnInfo[]>([]);
-
-  // Row element refs (keyed by column id) for the FLIP reorder animation.
-  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const reload = useCallback(async () => {
     if (!table) return;
@@ -120,40 +199,23 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const updateColumn = (i: number, field: keyof NewColumn, value: any) =>
     setColumns(prev => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
 
-  /** Move a column up/down with a FLIP animation (rows glide, not snap). */
+  /** Move a column up/down. Uses dnd-kit's arrayMove so the sortable animation
+   *  plays on the swap (same as drag-and-drop reordering). */
   const moveColumn = (i: number, dir: -1 | 1) => {
     const j = i + dir;
-    const current = columns;
-    if (j < 0 || j >= current.length) return;
-    const a = current[i];
-    const b = current[j];
-    const elA = rowRefs.current[a.id];
-    const elB = rowRefs.current[b.id];
-    const fromA = elA?.getBoundingClientRect().top ?? 0;
-    const fromB = elB?.getBoundingClientRect().top ?? 0;
+    if (j < 0 || j >= columns.length) return;
+    setColumns(prev => arrayMove(prev, i, j));
+  };
 
-    setColumns(prev => {
-      const next = [...prev];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
-    // After the DOM reflects the swap, animate each row from its old top to its
-    // new top (FLIP: First, Last, Invert, Play).
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const toA = elA?.getBoundingClientRect().top ?? 0;
-        const toB = elB?.getBoundingClientRect().top ?? 0;
-        elA?.animate(
-          [{ transform: `translateY(${fromA - toA}px)` }, { transform: "translateY(0)" }],
-          { duration: 220, easing: "ease-out" }
-        );
-        elB?.animate(
-          [{ transform: `translateY(${fromB - toB}px)` }, { transform: "translateY(0)" }],
-          { duration: 220, easing: "ease-out" }
-        );
-      });
-    });
+  const handleDragEnd = (event: { active: any; over: any }) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = columns.findIndex(c => c.id === active.id);
+    const newIndex = columns.findIndex(c => c.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    setColumns(prev => arrayMove(prev, oldIndex, newIndex));
   };
 
   const buildCreateSQL = useCallback((): string => {
@@ -365,61 +427,26 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
               <div className={cellClass}>Constraints</div>
               <div className={cellClass} />
             </div>
-            {columns.map((col, i) => {
-              const isLast = i === columns.length - 1;
-              const isFirst = i === 0;
-              return (
-                <div key={col.id} ref={el => { rowRefs.current[col.id] = el; }}
-                  className={COL_GRID + " grid items-center gap-2 py-1 text-sm"}>
-                  {/* # with stacked up/down chevrons */}
-                  <div className={cellClass + " flex flex-col items-center"}>
-                    <button onClick={() => moveColumn(i, -1)} disabled={isFirst}
-                      className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move up">
-                      <ChevronUp className="h-3 w-3" />
-                    </button>
-                    <span className="text-xs text-muted-foreground tabular-nums leading-tight">{i + 1}</span>
-                    <button onClick={() => moveColumn(i, 1)} disabled={isLast}
-                      className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:pointer-events-none" aria-label="Move down">
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div className={cellClass}>
-                    <Input value={col.name} onChange={e => updateColumn(i, "name", e.target.value)} placeholder="column_name" className="h-8 text-sm" />
-                  </div>
-                  <div className={cellClass}>
-                    <Select value={col.type} onValueChange={v => updateColumn(i, "type", v)}>
-                      <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
-                      <SelectContent>{COLUMN_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                  <div className={cellClass}>
-                    <Input value={col.defaultValue} onChange={e => updateColumn(i, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
-                  </div>
-                  <div className={cellClass + " flex items-center gap-3"}>
-                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Primary key">
-                      <Checkbox checked={col.primaryKey} onCheckedChange={(v) => { updateColumn(i, "primaryKey", !!v); if (v) updateColumn(i, "nullable", false); }} />PK
-                    </label>
-                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Auto increment">
-                      <Checkbox checked={col.autoIncrement} onCheckedChange={(v) => updateColumn(i, "autoIncrement", !!v)} />AI
-                    </label>
-                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Unique">
-                      <Checkbox checked={col.unique} onCheckedChange={(v) => updateColumn(i, "unique", !!v)} />UQ
-                    </label>
-                    <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Nullable">
-                      <Checkbox checked={col.nullable} onCheckedChange={(v) => updateColumn(i, "nullable", !!v)} disabled={col.primaryKey} />Null
-                    </label>
-                  </div>
-                  <div className={cellClass + " flex items-center justify-end gap-1"}>
-                    {!isCreate && (
-                      <Button size="sm" onClick={() => handleAddColumn(col)} disabled={saving || !col.name.trim()} className="h-7" title="Add this column">
-                        <Check className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="icon" onClick={() => removeColumn(i)} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Remove column"><X className="h-4 w-4" /></Button>
-                  </div>
-                </div>
-              );
-            })}
+            {columns.length > 0 && (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={columns.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                  {columns.map((col, i) => (
+                    <ColumnRow
+                      key={col.id}
+                      col={col}
+                      index={i}
+                      total={columns.length}
+                      isCreate={isCreate}
+                      saving={saving}
+                      onUpdate={updateColumn}
+                      onMove={moveColumn}
+                      onRemove={removeColumn}
+                      onAddColumn={handleAddColumn}
+                    />
+                  ))}
+                </SortableContext>
+              </DndContext>
+            )}
             {columns.length === 0 && !isCreate && (
               <p className="text-sm text-muted-foreground text-center py-2">No new columns queued. Add one below.</p>
             )}

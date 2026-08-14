@@ -12,6 +12,9 @@
     "tauri:dev": "env -i PATH=\"$PATH\" HOME=\"$HOME\" DISPLAY=\"$DISPLAY\" DBUS_SESSION_BUS_ADDRESS=\"$DBUS_SESSION_BUS_ADDRESS\" XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\" pnpm tauri dev"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-checkbox": "^1.3.7",
     "@radix-ui/react-context-menu": "^2.3.3",
