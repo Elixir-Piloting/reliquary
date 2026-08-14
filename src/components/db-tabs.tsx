@@ -34,10 +34,10 @@ export function DbTabs({ tabs, activeTabId, onTabSelect, onTabClose, onTabRename
     : undefined;
 
   return (
-    <div className="flex items-center gap-1 border-b border-border bg-muted/20 overflow-x-auto shrink-0">
+    <div className="flex items-center border-b border-border bg-muted/20 overflow-x-auto shrink-0">
       {tabs.map(tab => (
-        <div key={tab.id} className={cn("group flex items-center gap-2 px-3 py-2 text-sm transition-colors relative hover:bg-accent/50 border-t border-x",
-          activeTabId === tab.id ? "border-transparent bg-background text-foreground font-medium" : "border-border text-muted-foreground"
+        <div key={tab.id} className={cn("group flex items-center gap-2 px-3 py-2 text-sm transition-colors relative hover:bg-accent/50 border-t border-x border-border",
+          activeTabId === tab.id ? "bg-background text-foreground font-medium" : "text-muted-foreground"
         )}>
           <button
             onClick={() => onTabSelect(tab.id)}
