@@ -215,6 +215,7 @@ export default function DatabaseView() {
         executionTimeMs: 0,
       });
       setTotalCount(data.totalCount);
+      hasLoadedRef.current = true;
     } catch (e: any) {
       if (!silent) {
         setError(String(e));
@@ -228,7 +229,10 @@ export default function DatabaseView() {
   const fetchDataRef = useRef(fetchData);
   fetchDataRef.current = fetchData;
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Re-fetch on sort/filter/page changes without blanking the grid: once data
+  // has loaded, keep the old rows visible until the new result arrives.
+  const hasLoadedRef = useRef(false);
+  useEffect(() => { fetchData(hasLoadedRef.current); }, [fetchData]);
 
   const cycleSort = useCallback((column: string) => {
     setSort(prev => {
