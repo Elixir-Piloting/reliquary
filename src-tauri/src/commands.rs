@@ -417,22 +417,33 @@ fn local_pg_conn_str(host: &str, port: u16, user: Option<String>, password: Opti
 pub async fn list_local_databases(host: String, port: u16, user: Option<String>, password: Option<String>, _state: tauri::State<'_, AppState>) -> Result<Vec<LocalPgDatabase>, String> {
     let conn_str = local_pg_conn_str(&host, port, user, password);
     eprintln!("[local-pg] conn_str = {}", conn_str);
-    let (client, connection) = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await
-        .map_err(|_| "Timed out (5s)".to_string())?
-        .map_err(|e| format!("connect: {}", e))?;
-    tokio::spawn(async move { drop(connection); });
-    let rows = client.query(
-        "SELECT datname, pg_catalog.pg_get_userbyid(datdba) AS owner, pg_encoding_to_char(encoding) AS encoding, NULL::text AS size FROM pg_database WHERE datistemplate = false ORDER BY datname",
-        &[],
-    ).await.map_err(|e| format!("query: {}", e))?;
-    let dbs: Vec<LocalPgDatabase> = rows.iter().map(|r| LocalPgDatabase {
-        name: r.get(0),
-        owner: r.get(1),
-        encoding: r.get(2),
-        size: r.get(3),
-    }).collect();
-    drop(client);
-    Ok(dbs)
+    let res = tokio::time::timeout(std::time::Duration::from_secs(5), tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)).await;
+    match res {
+        Ok(Ok((client, connection))) => {
+            tokio::spawn(async move { drop(connection); });
+            eprintln!("[local-pg] connected OK");
+            let rows = client.query(
+                "SELECT datname, pg_catalog.pg_get_userbyid(datdba) AS owner, pg_encoding_to_char(encoding) AS encoding, NULL::text AS size FROM pg_database WHERE datistemplate = false ORDER BY datname",
+                &[],
+            ).await.map_err(|e| format!("query: {}", e))?;
+            let dbs: Vec<LocalPgDatabase> = rows.iter().map(|r| LocalPgDatabase {
+                name: r.get(0),
+                owner: r.get(1),
+                encoding: r.get(2),
+                size: r.get(3),
+            }).collect();
+            drop(client);
+            Ok(dbs)
+        }
+        Ok(Err(e)) => {
+            eprintln!("[local-pg] connect ERROR: {}", e);
+            Err(format!("connect: {}", e))
+        }
+        Err(_) => {
+            eprintln!("[local-pg] connect TIMEOUT");
+            Err("Timed out (5s)".to_string())
+        }
+    }
 }
 
 #[tauri::command]
