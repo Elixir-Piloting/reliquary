@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult, ResultsViewerProps, PendingChange } from "./types";
-import { PAGE_SIZE_OPTIONS } from "./types";
 import { ReviewChangesSheet } from "./review-changes-sheet";
 import { RowEditorPanel } from "./row-editor-panel";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -129,14 +128,9 @@ function ResultsLoadingSkeleton() {
 export function ResultsViewer({
   result, error, loading, schema, table, onRefresh, enableCRUD, readOnly, connectionId, pkColumns, columnsMeta, onAddColumn
 }: ResultsViewerProps) {
-  const [internalPage, setInternalPage] = useState(1);
-  const [internalPageSize, setInternalPageSize] = useState(100);
-  const page = internalPage; const setPage = setInternalPage;
-  const pageSize = internalPageSize; const setPageSize = setInternalPageSize;
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
-  const [pageSizePopoverOpen, setPageSizePopoverOpen] = useState(false);
   const [sortDropdownCol, setSortDropdownCol] = useState<string | null>(null);
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -190,7 +184,7 @@ export function ResultsViewer({
     rows: displayResult.rows,
   } : null, [displayResult]);
 
-  useEffect(() => { setLocalRows(null); setPage(1); setSelectedRows(new Set()); }, [result]);
+  useEffect(() => { setLocalRows(null); setSelectedRows(new Set()); }, [result]);
 
   // Close the right sidebar if this grid unmounts while the editor is open.
   useEffect(() => {
@@ -442,21 +436,16 @@ export function ResultsViewer({
     </div>
   );
 
-  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
-  const paginatedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
-  const startRow = (page - 1) * pageSize + 1;
-  const endRow = Math.min(page * pageSize, sortedRows.length);
+  const paginatedRows = sortedRows;
   const hasRows = paginatedRows.length > 0 || insertRows.length > 0;
 
   const toggleAllSelect = (checked: boolean) => {
-    if (checked) setSelectedRows(new Set(paginatedRows.map((_, i) => (page - 1) * pageSize + i)));
+    if (checked) setSelectedRows(new Set(paginatedRows.map((_, i) => i)));
     else setSelectedRows(new Set());
   };
   const toggleRowSelect = (index: number) => {
     setSelectedRows(prev => { const n = new Set(prev); n.has(index) ? n.delete(index) : n.add(index); return n; });
   };
-
-  const handlePageSizeChange = (newSize: number) => { setPageSize(newSize); setPage(1); setPageSizePopoverOpen(false); };
 
   return (
     <div className="flex h-full flex-col">
@@ -537,7 +526,7 @@ export function ResultsViewer({
               </TableHeader>
               <TableBody>
                 {paginatedRows.map((row, rowIndex) => {
-                  const actualIndex = (page - 1) * pageSize + rowIndex;
+                  const actualIndex = rowIndex;
                   const isSelected = selectedRows.has(actualIndex);
                   const pendingDelete = isPendingDelete(row);
                   return (
@@ -610,38 +599,6 @@ export function ResultsViewer({
                 ))}
               </TableBody>
             </Table>
-          </div>
-          <div className="shrink-0 border-t border-border bg-card/80 backdrop-blur-sm px-4 py-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                <span>{sortedRows.length.toLocaleString()} rows</span>
-                <span className="text-border">·</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs">Rows per page</span>
-                  <Popover open={pageSizePopoverOpen} onOpenChange={setPageSizePopoverOpen}>
-                    <PopoverTrigger asChild><Button variant="outline" size="sm" className="h-7 px-2 text-xs font-medium min-w-[3.5rem]">{pageSize}</Button></PopoverTrigger>
-                    <PopoverContent className="w-28 p-1" align="start">
-                      <div className="flex flex-col">{PAGE_SIZE_OPTIONS.map(size => (
-                        <button key={size} onClick={() => handlePageSizeChange(size)}
-                          className={cn("flex items-center justify-between rounded-sm px-2 py-1.5 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground", pageSize === size && "bg-accent text-accent-foreground font-medium")}>
-                          <span>{size}</span>{pageSize === size && <Check className="h-3.5 w-3.5" />}
-                        </button>
-                      ))}</div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground tabular-nums">{startRow}–{endRow} of {sortedRows.length.toLocaleString()}</span>
-                <span className="text-sm text-muted-foreground">({page}/{totalPages})</span>
-                <div className="flex items-center gap-0.5 ml-1">
-                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(1)} disabled={page <= 1}><ChevronsLeft className="h-3.5 w-3.5" /></Button>
-                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}><ChevronLeft className="h-3.5 w-3.5" /></Button>
-                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages}><ChevronRight className="h-3.5 w-3.5" /></Button>
-                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setPage(totalPages)} disabled={page >= totalPages}><ChevronsRight className="h-3.5 w-3.5" /></Button>
-                </div>
-              </div>
-            </div>
           </div>
         </>
       ) : (

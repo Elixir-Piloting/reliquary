@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import Editor from "@monaco-editor/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -100,6 +101,14 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
   const [validationError, setValidationError] = useState<string | null>(null);
   const [view, setView] = useState<'fields' | 'json'>('fields');
   const [jsonText, setJsonText] = useState('');
+  const [dark, setDark] = useState(false);
+
+  useEffect(() => {
+    setDark(document.documentElement.classList.contains("dark"));
+    const obs = new MutationObserver(() => setDark(document.documentElement.classList.contains("dark")));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
 
   const pkSet = useMemo(() => new Set(pkColumns), [pkColumns]);
 
@@ -315,13 +324,14 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
           </div>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col px-3 py-3">
-          <Textarea
+        <div className="flex flex-1 flex-col border-t border-border">
+          <Editor
+            height="100%"
+            language="json"
+            theme={dark ? "vs-dark" : "vs"}
             value={jsonText}
-            onChange={e => setJsonText(e.target.value)}
-            placeholder="{ }"
-            className="flex-1 min-h-0 resize-none font-mono text-xs leading-relaxed"
-            spellCheck={false}
+            onChange={val => setJsonText(val || "")}
+            options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, formatOnPaste: true }}
           />
         </div>
       )}
