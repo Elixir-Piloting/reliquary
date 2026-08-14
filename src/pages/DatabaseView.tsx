@@ -194,6 +194,7 @@ export default function DatabaseView() {
               <div className="flex-1 flex flex-col overflow-hidden">
                 <div className="h-auto min-h-12 border-b border-border flex items-center justify-between px-6 py-2 shrink-0 bg-muted/20">
                   <div className="flex items-center gap-3">
+                    <div id="table-actions-slot" />
                     <Button variant="outline" size="sm" disabled={loading} onClick={fetchData}>
                       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     </Button>

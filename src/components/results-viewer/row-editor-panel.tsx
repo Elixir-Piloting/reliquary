@@ -178,6 +178,19 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
   const isRequired = (col: RowEditorColumn) =>
     !col.isNullable && (col.defaultValue === null || col.defaultValue === undefined || col.defaultValue === '');
 
+  /** Whether any value differs from the row's actual DB values (or, for insert, anything is filled). */
+  const hasChanges = useMemo(() => {
+    if (mode === 'insert') {
+      return columns.some(col => (values[col.columnName] ?? '') !== '');
+    }
+    if (!row) return false;
+    return columns.some(col => {
+      const current = values[col.columnName] ?? '';
+      const original = formatValueForInput(row[col.columnName] ?? null, getInputType(col.dataType));
+      return current !== original;
+    });
+  }, [mode, columns, values, row]);
+
   const handleSaveEdit = () => {
     if (!row) return;
     const changes: PendingChangeLike[] = [];
@@ -324,14 +337,14 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
           </div>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col border-t border-border">
+        <div className="row-editor-json flex flex-1 flex-col border-t border-border">
           <Editor
             height="100%"
             language="json"
             theme={dark ? "vs-dark" : "vs"}
             value={jsonText}
             onChange={val => setJsonText(val || "")}
-            options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, formatOnPaste: true }}
+            options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "off", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, tabSize: 2, formatOnPaste: true, overviewRulerLanes: 0, hideCursorInOverviewRuler: true }}
           />
         </div>
       )}
@@ -340,7 +353,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
       )}
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          {mode === 'edit' && row && (
+          {mode === 'edit' && row && hasChanges && (
             <Button variant="outline" size="sm" onClick={handleRestore} disabled={saving} title="Discard edits and restore DB values">
               <RotateCcw className="h-3.5 w-3.5 mr-1" />Restore
             </Button>
@@ -353,10 +366,19 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button size="sm" onClick={mode === 'edit' ? (view === 'json' ? handleSaveFromJson : handleSaveEdit) : handleInsert} disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            {mode === 'edit' ? 'Stage Changes' : 'Stage Insert'}
-          </Button>
+          {mode === 'edit' ? (
+            hasChanges && (
+              <Button size="sm" onClick={view === 'json' ? handleSaveFromJson : handleSaveEdit} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Stage Changes
+              </Button>
+            )
+          ) : (
+            <Button size="sm" onClick={handleInsert} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Stage Insert
+            </Button>
+          )}
         </div>
       </div>
     </div>

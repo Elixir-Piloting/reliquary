@@ -451,21 +451,37 @@ export function ResultsViewer({
     <div className="flex h-full flex-col">
       <div className="shrink-0 border-b border-border bg-card/80 backdrop-blur-sm px-4 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5" onClick={handleCopyJson}><Copy className="h-3.5 w-3.5" />Copy as JSON</Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5" onClick={handleExportCsv}><FileDown className="h-3.5 w-3.5" />Export CSV</Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5" onClick={handleExportJson}><Download className="h-3.5 w-3.5" />Export JSON</Button>
-          </div>
-          {canEdit && (
-            <div className="flex items-center gap-1.5">
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={handleOpenInsert}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10" disabled={selectedRows.size === 0} onClick={() => setDeleteDialogOpen(true)}>
-                <Trash2 className="h-3.5 w-3.5" />Delete Selected ({selectedRows.size})
-              </Button>
-            </div>
-          )}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5"><Download className="h-3.5 w-3.5" />Export</Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-44 p-1" align="start">
+              <div className="flex flex-col">
+                <button onClick={handleExportCsv} className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground">
+                  <FileDown className="h-3.5 w-3.5" />Export CSV
+                </button>
+                <button onClick={handleExportJson} className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground">
+                  <Download className="h-3.5 w-3.5" />Export JSON
+                </button>
+                <button onClick={handleCopyJson} className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground">
+                  <Copy className="h-3.5 w-3.5" />Copy as JSON
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
+      {canEdit && (() => {
+        const slot = typeof document !== 'undefined' ? document.getElementById('table-actions-slot') : null;
+        if (!slot) return null;
+        return createPortal(
+          <div className="flex items-center gap-1.5">
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={handleOpenInsert}><Plus className="h-3.5 w-3.5" />Insert Row</Button>
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10" disabled={selectedRows.size === 0} onClick={() => setDeleteDialogOpen(true)}>
+              <Trash2 className="h-3.5 w-3.5" />Delete Selected ({selectedRows.size})
+            </Button>
+          </div>, slot);
+      })()}
       {hasRows ? (
         <>
           <div className="flex-1 overflow-auto">

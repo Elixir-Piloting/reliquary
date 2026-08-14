@@ -135,6 +135,17 @@
   *::-webkit-scrollbar-thumb { background: hsl(240 5% 60% / 0.4); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
   *::-webkit-scrollbar-thumb:hover { background: hsl(240 5% 60% / 0.6); border: 2px solid transparent; background-clip: padding-box; }
   *::-webkit-scrollbar-corner { background: transparent; }
+
+  /* JSON editor in the row sidebar: match the app background, hide the gutter. */
+  .row-editor-json .monaco-editor,
+  .row-editor-json .monaco-editor .margin,
+  .row-editor-json .monaco-editor-background,
+  .row-editor-json .monaco-editor .monaco-editor-background {
+    background-color: hsl(var(--background)) !important;
+  }
+  .row-editor-json .monaco-editor .margin { background-color: hsl(var(--background)) !important; }
+  .row-editor-json .monaco-editor .decorationsOverviewRuler,
+  .row-editor-json .monaco-editor .minimap { display: none !important; }
 }
 
 @layer utilities {
