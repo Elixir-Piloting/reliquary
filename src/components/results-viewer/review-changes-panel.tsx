@@ -2,7 +2,7 @@
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { X, Check, Loader2, ChevronRight } from "lucide-react";
+import { X, Check, Loader2, ChevronRight, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PendingChange } from "./types";
 
@@ -59,9 +59,15 @@ export function ReviewChangesPanel({ changes, onUnstage, onApplyAll, applying, o
                   </Button>
                 </div>
                 {op === "update" && (
-                  <div className="text-sm space-y-1 font-mono">
-                    <div className="text-muted-foreground line-through text-xs">{String(change.originalValue ?? 'NULL')}</div>
-                    <div className="text-foreground text-xs">{String(change.newValue ?? 'NULL')}</div>
+                  <div className="text-xs space-y-1 font-mono">
+                    <div className="flex items-start gap-2 rounded bg-destructive/10 px-2 py-1">
+                      <Minus className="mt-0.5 h-3 w-3 shrink-0 text-destructive" />
+                      <span className="text-destructive line-through break-all">{String(change.originalValue ?? 'NULL')}</span>
+                    </div>
+                    <div className="flex items-start gap-2 rounded bg-success/10 px-2 py-1">
+                      <Plus className="mt-0.5 h-3 w-3 shrink-0 text-success" />
+                      <span className="text-success break-all">{String(change.newValue ?? 'NULL')}</span>
+                    </div>
                   </div>
                 )}
                 {op !== "update" && change.statement && (

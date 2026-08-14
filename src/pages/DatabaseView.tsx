@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { DatabaseNavbar } from "@/components/database-navbar";
 import { DbTabs } from "@/components/db-tabs";
@@ -14,7 +14,7 @@ import API from "@/lib/ipc-client";
 import type { QueryResult, ColumnInfo } from "@/lib/db/types";
 import { generateTabId, type WorkspaceTab } from "@/lib/workspace-tabs";
 import { clearQueryTransient } from "@/components/query-pane";
-import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Check } from "lucide-react";
+import { RefreshCw, Loader2, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 
@@ -38,8 +38,17 @@ export default function DatabaseView() {
   const [pkColumns, setPkColumns] = useState<Record<string, string[]>>({});
   const [columnsMeta, setColumnsMeta] = useState<Record<string, ColumnInfo[]>>({});
   const [readOnly, setReadOnly] = useState(false);
+  const [autoRefreshMs, setAutoRefreshMs] = useState<number | null>(null);
+  const [autoRefreshOpen, setAutoRefreshOpen] = useState(false);
 
   const activeTab = tabs.find(t => t.id === activeTabId);
+
+  // Schedule auto-refresh for the active table when enabled.
+  useEffect(() => {
+    if (!autoRefreshMs || !activeTab || activeTab.kind !== "table") return;
+    const id = setInterval(() => fetchDataRef.current(), autoRefreshMs);
+    return () => clearInterval(id);
+  }, [autoRefreshMs, activeTab, connectionId]);
 
   useEffect(() => {
     if (!connectionId) return;
@@ -208,6 +217,9 @@ export default function DatabaseView() {
     setLoading(false);
   }, [connectionId, activeTab, page, pageSize]);
 
+  const fetchDataRef = useRef(fetchData);
+  fetchDataRef.current = fetchData;
+
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 0;
@@ -266,9 +278,34 @@ export default function DatabaseView() {
         <div className="h-auto min-h-12 border-b border-border flex items-center justify-between px-6 py-2 shrink-0 bg-muted/20">
           <div className="flex items-center gap-3">
             <div id="table-actions-slot" />
-            <Button variant="outline" size="sm" disabled={loading} onClick={fetchData}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin-burst" /> : <RefreshCw className="h-4 w-4" />}
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="h-7 px-1.5 gap-1 text-muted-foreground hover:text-foreground" disabled={loading} onClick={fetchData}>
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin-burst" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                <span className="text-xs">Refresh</span>
+              </Button>
+              <Popover open={autoRefreshOpen} onOpenChange={setAutoRefreshOpen}>
+                <PopoverTrigger asChild>
+                  <button className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Auto refresh">
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-44 p-1" align="start">
+                  <div className="text-xs font-medium text-muted-foreground px-2 py-1.5">Auto refresh</div>
+                  <button onClick={() => { setAutoRefreshMs(null); setAutoRefreshOpen(false); }}
+                    className={cn("flex items-center gap-2 w-full px-2 py-1 text-xs rounded hover:bg-accent", autoRefreshMs === null && "font-medium")}>
+                    {autoRefreshMs === null && <Check className="h-3 w-3" />}
+                    Off
+                  </button>
+                  {[{ label: "5 seconds", ms: 5000 }, { label: "10 seconds", ms: 10000 }, { label: "30 seconds", ms: 30000 }, { label: "1 minute", ms: 60000 }, { label: "5 minutes", ms: 300000 }].map(opt => (
+                    <button key={opt.ms} onClick={() => { setAutoRefreshMs(opt.ms); setAutoRefreshOpen(false); }}
+                      className={cn("flex items-center gap-2 w-full px-2 py-1 text-xs rounded hover:bg-accent", autoRefreshMs === opt.ms && "font-medium")}>
+                      {autoRefreshMs === opt.ms && <Check className="h-3 w-3" />}
+                      {opt.label}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            </div>
             {result && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Popover open={pageSizePopoverOpen} onOpenChange={setPageSizePopoverOpen}>

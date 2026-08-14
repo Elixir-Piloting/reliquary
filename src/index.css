@@ -138,13 +138,18 @@
     animation: shimmer 1.5s infinite;
   }
 
-  /* Intermittent refresh spinner: spins ~1s, pauses ~0.6s, repeats. */
+  /* Intermittent fast refresh spinner: several quick 300ms spins, then pause. */
   @keyframes spinBurst {
     0% { transform: rotate(0deg); }
-    55% { transform: rotate(360deg); }
-    100% { transform: rotate(360deg); }
+    12% { transform: rotate(360deg); }
+    25% { transform: rotate(720deg); }
+    37% { transform: rotate(1080deg); }
+    50% { transform: rotate(1440deg); }
+    62% { transform: rotate(1800deg); }
+    75% { transform: rotate(2160deg); }
+    100% { transform: rotate(2160deg); }
   }
-  .animate-spin-burst { animation: spinBurst 1.6s ease-in-out infinite; }
+  .animate-spin-burst { animation: spinBurst 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
 
   /* Slim scrollbars: no up/down arrows, invisible track, thumb only. */
   * { scrollbar-width: thin; scrollbar-color: hsl(240 5% 60% / 0.4) transparent; }
