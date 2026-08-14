@@ -147,7 +147,7 @@ pub fn parse_pg_connstr(url: &str) -> Result<String, String> {
 /// single-quoted, with embedded quotes and backslashes backslash-escaped.
 /// Unquoted values would otherwise break the `key=value` tokenizer (e.g. a
 /// URL-decoded password with a space).
-fn connstr_value(v: &str) -> String {
+pub fn connstr_value(v: &str) -> String {
     if v.contains('\'') || v.contains('=') || v.chars().any(|c| c.is_whitespace()) {
         let escaped = v.replace('\\', "\\\\").replace('\'', "\\'");
         format!("'{}'", escaped)

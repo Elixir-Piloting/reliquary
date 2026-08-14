@@ -395,8 +395,21 @@ pub async fn detect_local_servers(_state: tauri::State<'_, AppState>) -> Result<
 fn local_pg_conn_str(host: &str, port: u16, user: Option<String>, password: Option<String>) -> String {
     let user = user.unwrap_or_else(|| "postgres".to_string());
     match password {
-        Some(p) if !p.is_empty() => format!("host={host} port={port} dbname=postgres user={user} password={p} connect_timeout=5"),
-        _ => format!("host={host} port={port} dbname=postgres user={user} connect_timeout=5"),
+        // Quote values like the main parse_pg_connstr so passwords containing
+        // spaces/quotes/backslashes/= don't break the conninfo tokenizer.
+        Some(p) if !p.is_empty() => format!(
+            "host={} port={} dbname=postgres user={} password={} connect_timeout=5",
+            pg::connstr_value(host),
+            pg::connstr_value(&port.to_string()),
+            pg::connstr_value(&user),
+            pg::connstr_value(&p),
+        ),
+        _ => format!(
+            "host={} port={} dbname=postgres user={} connect_timeout=5",
+            pg::connstr_value(host),
+            pg::connstr_value(&port.to_string()),
+            pg::connstr_value(&user),
+        ),
     }
 }
 

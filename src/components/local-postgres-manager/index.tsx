@@ -46,12 +46,14 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
         const dbs = await loadDatabases.mutateAsync({ host: server.host, port: server.port, user: saved.user, password: saved.password });
         setDatabases(prev => ({ ...prev, [key]: dbs }));
       } catch {
-        // Saved credentials failed (wrong/expired password). Surface the dialog
-        // pre-filled so the user can correct it instead of silently stalling.
-        setTempUser(saved.user);
-        setTempPassword(saved.password);
+        // Saved credentials failed (wrong/expired password). Drop them and
+        // surface an empty dialog so the user can enter the correct password
+        // instead of being stuck with the bad saved one.
+        Persistence.removeServerPassword(server.host, server.port);
+        setTempUser(saved.user || "postgres");
+        setTempPassword("");
         setPasswordForServer(server);
-        setSavePassword(true);
+        setSavePassword(false);
         setShowPasswordDialog(true);
       }
       setLoadingDb(null);

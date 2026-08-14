@@ -6,6 +6,7 @@ import { AppLogo } from "@/components/app-logo";
 import { ArrowLeft } from "lucide-react";
 import { useAddConnection, useConnect } from "@/lib/query/hooks/use-connections";
 import type { LocalPostgresConnectionDraft } from "@/components/local-postgres-manager/types";
+import { Persistence } from "@/lib/persistence";
 import { toast } from "sonner";
 
 export default function LocalPostgresSelectionPage() {
@@ -20,6 +21,15 @@ export default function LocalPostgresSelectionPage() {
       toast.success(`Connected to ${config.name}`);
       navigate(`/db/${created.id}`);
     } catch (e: any) {
+      // A failed connect may be due to bad saved credentials — drop them so the
+      // next attempt re-prompts for the password.
+      const m = String(e).toLowerCase();
+      if (m.includes("password") || m.includes("auth") || m.includes("28p01") || m.includes("28p")) {
+        try {
+          const u = new URL(config.url);
+          Persistence.removeServerPassword(u.hostname, Number(u.port || 5432));
+        } catch { /* ignore */ }
+      }
       toast.error("Connection failed", { description: String(e) });
     }
   };
