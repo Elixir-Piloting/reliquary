@@ -11,7 +11,7 @@ use tokio_postgres::tls::{
 };
 use tokio_postgres::Socket;
 use tokio_postgres::Client as PgClient;
-use tokio_postgres::types::{FromSql, ToSql, Type};
+use tokio_postgres::types::{FromSql, IsNull, ToSql, Type};
 
 // ---------------------------------------------------------------------------
 // Parse connection URL -> conn string parts
@@ -782,8 +782,28 @@ pub fn pg_value(row: &tokio_postgres::Row, i: usize) -> serde_json::Value {
         "timestamp" => row.try_get::<_, Option<chrono::NaiveDateTime>>(i).ok().flatten().map(|d| serde_json::Value::String(d.to_string())).unwrap_or(serde_json::Value::Null),
         "timestamptz" => row.try_get::<_, Option<chrono::DateTime<chrono::Utc>>>(i).ok().flatten().map(|d| serde_json::Value::String(d.to_rfc3339())).unwrap_or(serde_json::Value::Null),
         name if name.starts_with('_') => pg_array_value(row, i, name),
+        _ if is_enum_type(row, i) => enum_value(row, i),
         _ => row.try_get::<_, Option<String>>(i).ok().flatten().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
     }
+}
+
+/// True when the column at `i` is a user-defined enum type (`Kind::Enum`).
+///
+/// tokio-postgres's `String`/`&str` `FromSql` only accepts text-like OIDs, so
+/// custom enum types must be read via their raw binary label bytes instead.
+fn is_enum_type(row: &tokio_postgres::Row, i: usize) -> bool {
+    matches!(row.columns()[i].type_().kind(), tokio_postgres::types::Kind::Enum(_))
+}
+
+/// Read an enum column's label as a JSON string. Enum values travel in binary
+/// as their label's UTF-8 bytes, so a raw read + `from_utf8` is exact.
+fn enum_value(row: &tokio_postgres::Row, i: usize) -> serde_json::Value {
+    row.try_get::<_, Option<RawBytes>>(i)
+        .ok()
+        .flatten()
+        .and_then(|raw| String::from_utf8(raw.0).ok())
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Render a 1-D Postgres array column as a JSON array of its element values.
@@ -823,9 +843,22 @@ fn pg_array_value(row: &tokio_postgres::Row, i: usize, type_name: &str) -> serde
         "numeric" => row.try_get::<_, Option<Vec<Option<RawBytes>>>>(i).ok().flatten()
             .map(|v| collect(v.into_iter().map(|x| x.and_then(|raw| numeric_bytes_to_string(&raw.0).ok()).map(serde_json::Value::String)).collect()))
             .unwrap_or(serde_json::Value::Null),
+        _ if is_enum_array(row, i) => row.try_get::<_, Option<Vec<Option<RawBytes>>>>(i).ok().flatten()
+            .map(|v| collect(v.into_iter().map(|x| x.and_then(|raw| String::from_utf8(raw.0).ok()).map(serde_json::Value::String)).collect()))
+            .unwrap_or(serde_json::Value::Null),
         _ => row.try_get::<_, Option<Vec<Option<String>>>>(i).ok().flatten()
             .map(|v| collect(v.into_iter().map(|x| x.map(serde_json::Value::String)).collect()))
             .unwrap_or(serde_json::Value::Null),
+    }
+}
+
+/// True when the column at `i` is an array whose element type is a user-defined
+/// enum. Array elements share the element's binary format, so enum-array
+/// elements are read via their raw label bytes.
+fn is_enum_array(row: &tokio_postgres::Row, i: usize) -> bool {
+    match row.columns()[i].type_().kind() {
+        tokio_postgres::types::Kind::Array(inner) => matches!(inner.kind(), tokio_postgres::types::Kind::Enum(_)),
+        _ => false,
     }
 }
 
@@ -952,9 +985,34 @@ pub fn json_to_tosql(v: &serde_json::Value) -> Box<dyn ToSql + Send + Sync> {
                 Box::new(n.to_string())
             }
         }
-        serde_json::Value::String(s) => Box::new(s.clone()),
+        // A `SqlText` (not a plain `String`) so enum columns can be bound too:
+        // tokio-postgres's `String` rejects `Kind::Enum`, but an enum's binary
+        // wire format is its label as UTF-8, which is exactly what this writes.
+        serde_json::Value::String(s) => Box::new(SqlText(s.clone())),
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => Box::new(v.to_string()),
     }
+}
+
+/// A string value that can be bound to either a text column or a user-defined
+/// enum column. Enums travel in binary as their label's UTF-8 bytes, so the
+/// bytes written are identical to a plain text value — only `accepts` differs.
+#[derive(Debug, Clone)]
+struct SqlText(String);
+
+impl ToSql for SqlText {
+    fn to_sql(
+        &self,
+        _ty: &Type,
+        out: &mut tokio_postgres::types::private::BytesMut,
+    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        out.extend_from_slice(self.0.as_bytes());
+        Ok(IsNull::No)
+    }
+    fn accepts(ty: &Type) -> bool {
+        matches!(ty.kind(), tokio_postgres::types::Kind::Enum(_))
+            || <&str as ToSql>::accepts(ty)
+    }
+    tokio_postgres::types::to_sql_checked!();
 }
 
 pub fn is_select_query(sql: &str) -> bool {
@@ -1745,6 +1803,7 @@ pub async fn pg_connection_info(client: &PgClient, url: &str, read_only: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_postgres::types::Kind;
 
     #[test]
     fn raw_bytes_accepts_numeric_oid() {
@@ -1965,5 +2024,35 @@ mod tests {
         assert_eq!(j["supabaseSchemas"], serde_json::json!(["auth", "storage"]));
         assert_eq!(j["readOnly"], false);
         assert_eq!(j["pooledEndpoint"], true);
+    }
+
+    #[test]
+    fn sql_text_accepts_enum_kind_and_text() {
+        use tokio_postgres::types::ToSql;
+        let enum_ty = Type::new("payment_method".into(), 12345, Kind::Enum(vec!["card".into(), "bank".into()]), "public".into());
+        let text_ty = Type::TEXT;
+        let int_ty = Type::INT4;
+        assert!(<SqlText as ToSql>::accepts(&enum_ty), "enum kinds must be bindable");
+        assert!(<SqlText as ToSql>::accepts(&text_ty), "text still bindable");
+        assert!(!<SqlText as ToSql>::accepts(&int_ty), "non-text non-enum rejected");
+    }
+
+    #[test]
+    fn sql_text_writes_label_bytes_for_enum() {
+        use tokio_postgres::types::private::BytesMut;
+        use tokio_postgres::types::ToSql;
+        let enum_ty = Type::new("payment_method".into(), 12345, Kind::Enum(vec!["card".into(), "bank".into()]), "public".into());
+        let mut buf = BytesMut::new();
+        let v = SqlText("bank".into());
+        assert!(matches!(ToSql::to_sql(&v, &enum_ty, &mut buf), Ok(IsNull::No)));
+        assert_eq!(&buf[..], b"bank", "enum binary format is the label as UTF-8");
+    }
+
+    #[test]
+    fn raw_bytes_can_read_enum_label() {
+        use tokio_postgres::types::FromSql;
+        let enum_ty = Type::new("billing_type".into(), 999, Kind::Enum(vec!["monthly".into(), "once".into()]), "public".into());
+        let raw = RawBytes::from_sql(&enum_ty, b"monthly").unwrap();
+        assert_eq!(String::from_utf8(raw.0).unwrap(), "monthly");
     }
 }
