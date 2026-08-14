@@ -20,6 +20,10 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
   const [databases, setDatabases] = useState<Record<string, LocalPgDatabase[]>>({});
   const [loadingDb, setLoadingDb] = useState<string | null>(null);
 
+  // Credentials that successfully connected during this session — preferred over
+  // possibly-stale saved passwords when connecting to a database.
+  const [workingCreds, setWorkingCreds] = useState<Record<string, { user: string; password: string }>>({});
+
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [passwordForServer, setPasswordForServer] = useState<LocalPostgresServer | null>(null);
   const [tempUser, setTempUser] = useState("postgres");
@@ -45,6 +49,7 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
       try {
         const dbs = await loadDatabases.mutateAsync({ host: server.host, port: server.port, user: saved.user, password: saved.password });
         setDatabases(prev => ({ ...prev, [key]: dbs }));
+        setWorkingCreds(prev => ({ ...prev, [key]: { user: saved.user, password: saved.password } }));
       } catch {
         // Saved credentials failed (wrong/expired password). Drop them and
         // surface an empty dialog so the user can enter the correct password
@@ -91,6 +96,7 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
       });
       const dbs = await loadDatabases.mutateAsync({ host: passwordForServer.host, port: passwordForServer.port, user: tempUser, password: tempPassword });
       setDatabases(prev => ({ ...prev, [key]: dbs }));
+      setWorkingCreds(prev => ({ ...prev, [key]: { user: tempUser, password: tempPassword } }));
       // Only persist credentials after a successful connection.
       if (savePassword) {
         Persistence.setServerPassword(passwordForServer.host, passwordForServer.port, tempUser, tempPassword);
@@ -112,11 +118,14 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
     user?: string,
     password?: string,
   ) => {
+    const key = `${server.host}:${server.port}`;
+    const working = workingCreds[key];
     const saved = Persistence.getServerPassword(server.host, server.port);
-    const finalUser = user || saved?.user || "postgres";
-    const finalPassword = password || saved?.password || "";
+    // Prefer creds that just worked in this session, then saved, then defaults.
+    const finalUser = user || working?.user || saved?.user || "postgres";
+    const finalPassword = password || working?.password || saved?.password || "";
 
-    if (!user && !password && !saved) {
+    if (!user && !password && !working && !saved) {
       setPendingDatabase(database);
       setTempUser("postgres");
       setTempPassword("");
