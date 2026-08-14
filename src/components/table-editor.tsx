@@ -9,6 +9,8 @@ import { Plus, X, Loader2, Save, ArrowLeft, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ColumnInfo } from "@/lib/db/types";
 import { cn } from "@/lib/utils";
+import { useRightSidebar } from "@/components/right-sidebar-context";
+import { CreateTableSqlPanel } from "@/components/create-table-sql-panel";
 
 const COLUMN_TYPES = ["VARCHAR", "TEXT", "INTEGER", "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "REAL", "DOUBLE PRECISION", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ", "UUID", "JSON", "JSONB"];
 
@@ -73,6 +75,26 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     });
     return `CREATE TABLE "${schema}"."${tableName}" (\n  ${cols.join(",\n  ")}\n);`;
   }, [columns, schema, tableName]);
+
+  // In create mode, surface the generated SQL in the right sidebar (context-aware
+  // "row inspector" panel) instead of an inline preview.
+  const rightSidebar = useRightSidebar();
+  const createSql = buildCreateSQL();
+  useEffect(() => {
+    if (!isCreate) {
+      rightSidebar.closeRight();
+      return;
+    }
+    rightSidebar.openRight(
+      <CreateTableSqlPanel sql={createSql} schema={schema} table={tableName} onClose={() => rightSidebar.closeRight()} />
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCreate, createSql, schema, tableName]);
+
+  useEffect(() => {
+    return () => rightSidebar.closeRight();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCreate = async () => {
     if (!tableName.trim()) { toast.error("Table name is required"); return; }
@@ -267,10 +289,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
           </div>
 
           {isCreate && (
-            <div className="bg-muted p-3 rounded-lg">
-              <Label className="text-xs text-muted-foreground">Preview:</Label>
-              <pre className="text-xs mt-1 overflow-x-auto font-mono">{buildCreateSQL()}</pre>
-            </div>
+            <p className="text-sm text-muted-foreground">SQL preview is shown in the right sidebar (Row Inspector).</p>
           )}
         </div>
       </div>

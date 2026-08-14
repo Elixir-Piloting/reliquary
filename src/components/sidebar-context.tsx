@@ -15,9 +15,9 @@ const SidebarContext = createContext<SidebarContextType>({
   setWidth: () => {},
 });
 
-export const SIDEBAR_MIN_WIDTH = 176;
+export const SIDEBAR_MIN_WIDTH = 330;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_DEFAULT_WIDTH = 256;
+export const SIDEBAR_DEFAULT_WIDTH = 330;
 
 export function SidebarProvider({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);

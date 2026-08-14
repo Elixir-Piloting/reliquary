@@ -353,14 +353,14 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
       )}
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          {mode === 'edit' && row && hasChanges && (
-            <Button variant="outline" size="sm" onClick={handleRestore} disabled={saving} title="Discard edits and restore DB values">
-              <RotateCcw className="h-3.5 w-3.5 mr-1" />Restore
-            </Button>
-          )}
           {mode === 'edit' && row && onDeleteRow && (
             <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onDeleteRow(row)} disabled={saving}>
               <Trash2 className="h-3.5 w-3.5 mr-1" />Delete
+            </Button>
+          )}
+          {mode === 'edit' && row && hasChanges && (
+            <Button variant="outline" size="sm" onClick={handleRestore} disabled={saving} title="Discard edits and restore DB values">
+              <RotateCcw className="h-3.5 w-3.5 mr-1" />Restore
             </Button>
           )}
         </div>

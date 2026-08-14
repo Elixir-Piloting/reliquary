@@ -86,7 +86,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className={cn("border-r border-border flex flex-col relative group transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "", "shrink-0")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 176 } : undefined}>
+      <div className={cn("border-r border-border flex flex-col relative group transition-all duration-200 ease-in-out", sidebarCollapsed ? "w-0 overflow-hidden" : "", "shrink-0")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 330 } : undefined}>
         <div className="px-4 py-4 shrink-0">
           <Popover open={connectionsPopoverOpen} onOpenChange={setConnectionsPopoverOpen}>
             <PopoverTrigger asChild>
