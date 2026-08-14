@@ -26,6 +26,8 @@ interface RowEditorPanelProps {
   columns: RowEditorColumn[];
   pkColumns: string[];
   row: Record<string, unknown> | null;
+  /** Staged (uncommitted) new values keyed by column, for highlighting. */
+  stagedValues?: Record<string, string>;
   onClose: () => void;
   onStageEdit: (changes: PendingChangeLike[]) => void;
   onStageInsert: (statement: RowMutationStatement, values: Record<string, unknown>) => void;
@@ -45,21 +47,25 @@ export interface PendingChangeLike {
   newValue: string;
 }
 
-function FieldControl({ column, value, enumValues, onValue, disabled }: {
+function FieldControl({ column, value, enumValues, onValue, disabled, changed }: {
   column: RowEditorColumn;
   value: string;
   enumValues: string[] | null;
   onValue: (v: string) => void;
   disabled?: boolean;
+  changed?: boolean;
 }) {
   const inputType = getInputType(column.dataType);
   const isBool = inputType === 'select-boolean';
   const isEnum = inputType === 'maybe-enum' && enumValues && enumValues.length > 0;
+  const changedCls = changed
+    ? "border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400 focus:ring-amber-500"
+    : "";
 
   if (isBool) {
     return (
       <Select value={value} onValueChange={onValue} disabled={disabled}>
-        <SelectTrigger className="h-9"><SelectValue placeholder="NULL" /></SelectTrigger>
+        <SelectTrigger className={cn("h-9", changedCls)}><SelectValue placeholder="NULL" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">NULL</SelectItem>
           <SelectItem value="true">true</SelectItem>
@@ -71,7 +77,7 @@ function FieldControl({ column, value, enumValues, onValue, disabled }: {
   if (isEnum) {
     return (
       <Select value={value} onValueChange={onValue} disabled={disabled}>
-        <SelectTrigger className="h-9"><SelectValue placeholder="NULL" /></SelectTrigger>
+        <SelectTrigger className={cn("h-9", changedCls)}><SelectValue placeholder="NULL" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">NULL</SelectItem>
           {enumValues!.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
@@ -82,20 +88,20 @@ function FieldControl({ column, value, enumValues, onValue, disabled }: {
   const type = inputType === 'date' ? 'date' : inputType === 'datetime-local' ? 'datetime-local' : 'text';
   if (isNumericType(column.dataType)) {
     return (
-      <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type="number" inputMode="decimal" disabled={disabled} />
+      <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className={cn("h-9 font-mono text-xs", changedCls)} type="number" inputMode="decimal" disabled={disabled} />
     );
   }
   if (isTextareaType(column.dataType)) {
     return (
-      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="min-h-[120px] font-mono text-xs leading-relaxed" rows={4} disabled={disabled} />
+      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className={cn("min-h-[120px] font-mono text-xs leading-relaxed", changedCls)} rows={4} disabled={disabled} />
     );
   }
   return (
-    <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className="h-9 font-mono text-xs" type={type} disabled={disabled} />
+    <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className={cn("h-9 font-mono text-xs", changedCls)} type={type} disabled={disabled} />
   );
 }
 
-export function RowEditorPanel({ open, mode, connectionId, schema, table, columns, pkColumns, row, onClose, onStageEdit, onStageInsert, onDeleteRow }: RowEditorPanelProps) {
+export function RowEditorPanel({ open, mode, connectionId, schema, table, columns, pkColumns, row, stagedValues, onClose, onStageEdit, onStageInsert, onDeleteRow }: RowEditorPanelProps) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [enumValues, setEnumValues] = useState<Record<string, string[] | null>>({});
   const [saving, setSaving] = useState(false);
@@ -118,10 +124,13 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
     setValidationError(null);
     setSaving(false);
     setView('fields');
-    // Pre-fill from the row being edited; blank for insert.
+    // Pre-fill from the row being edited; blank for insert. Staged (uncommitted)
+    // values take precedence so inline edits show up in the sidebar.
     const next: Record<string, string> = {};
     for (const col of columns) {
-      if (mode === 'edit' && row) {
+      if (stagedValues && stagedValues[col.columnName] !== undefined) {
+        next[col.columnName] = stagedValues[col.columnName];
+      } else if (mode === 'edit' && row) {
         next[col.columnName] = formatValueForInput(row[col.columnName] ?? null, getInputType(col.dataType));
       } else {
         next[col.columnName] = '';
@@ -144,7 +153,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
       setEnumValues(out);
     };
     fetchEnums();
-  }, [open, mode, columns, connectionId, row]);
+  }, [open, mode, columns, connectionId, row, stagedValues]);
 
   if (!open) return null;
 
@@ -331,10 +340,10 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
                       <span className="rounded bg-muted px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Auto</span>
                     )}
                     <span className="text-muted-foreground/60 font-normal truncate">{col.dataType}</span>
-                    {pkSet.has(col.columnName) && <KeyRound className="h-3 w-3 shrink-0 text-amber-500/70" />}
                     {isRequired(col) && (
-                      <span className="ml-auto rounded bg-destructive/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-destructive">Required</span>
+                      <span className="rounded bg-destructive/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-destructive">Required</span>
                     )}
+                    {pkSet.has(col.columnName) && <KeyRound className="h-3 w-3 shrink-0 text-amber-500/70" />}
                   </Label>
                   <FieldControl
                     column={col}
@@ -342,6 +351,7 @@ export function RowEditorPanel({ open, mode, connectionId, schema, table, column
                     enumValues={enumValues[col.columnName] ?? null}
                     onValue={v => setValue(col.columnName, v)}
                     disabled={disabled}
+                    changed={stagedValues ? stagedValues[col.columnName] !== undefined : false}
                   />
                 </div>
               );

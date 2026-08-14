@@ -162,6 +162,16 @@ export function ResultsViewer({
   // panel is always mounted into `MainLayout`'s sidebar; this effect only swaps
   // its content (so clicking a cell can stage a row's form without opening the
   // sidebar). Opening is controlled by the insert action and the navbar toggle.
+  const applyStagedToRow = useCallback((row: Record<string, unknown>): Record<string, unknown> => {
+    const merged: Record<string, unknown> = { ...row };
+    for (const change of pendingChanges) {
+      if (change.op === 'update' && change.columnName && Object.entries(change.pkValues).every(([k, v]) => row[k] === v)) {
+        merged[change.columnName] = change.newValue;
+      }
+    }
+    return merged;
+  }, [pendingChanges]);
+
   useEffect(() => {
     if (!editor || !canEdit || !schema || !table || !connectionId) {
       rightSidebar.setContent(null);
@@ -178,7 +188,11 @@ export function ResultsViewer({
           columnName: c.name, dataType: c.dataType, isNullable: true, isPrimaryKey: pkColumns?.includes(c.name) || false, defaultValue: null,
         })))}
         pkColumns={pkColumns || []}
-        row={editor.row}
+        row={editor.row ? applyStagedToRow(editor.row) : null}
+        stagedValues={pendingChanges.filter(c => c.op === 'update').reduce<Record<string, string>>((acc, c) => {
+          acc[c.columnName] = String(c.newValue ?? '');
+          return acc;
+        }, {})}
         onClose={() => { rightSidebar.closeRight(); setEditor(null); }}
         onStageEdit={handleStageRowEdits}
         onStageInsert={handleInsertSubmit}
@@ -186,7 +200,7 @@ export function ResultsViewer({
       />
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, canEdit, schema, table, connectionId, columnsMeta, pkColumns]);
+  }, [editor, canEdit, schema, table, connectionId, columnsMeta, pkColumns, pendingChanges]);
 
   // Show the staged-changes review panel in the right sidebar when the user
   // clicks "Review (N) changes" — reuses the sidebar instead of a separate sheet.
@@ -280,13 +294,7 @@ export function ResultsViewer({
   const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
     // Show staged (uncommitted) values in the editor rather than DB values.
-    const merged: Record<string, unknown> = { ...row };
-    for (const change of pendingChanges) {
-      if (change.op === 'update' && change.columnName && Object.entries(change.pkValues).every(([k, v]) => row[k] === v)) {
-        merged[change.columnName] = change.newValue;
-      }
-    }
-    setEditor({ mode: 'edit', row: merged });
+    setEditor({ mode: 'edit', row: applyStagedToRow(row) });
   };
 
   /** Stage a delete for the row shown in the sidebar editor, then close it. */
