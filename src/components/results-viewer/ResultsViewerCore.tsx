@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check, Copy, X, Plus, Trash2, FileDown, Download } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Check, Copy, X, Plus, Trash2, FileDown, Download, CheckCircle2 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -125,6 +125,29 @@ function ResultsLoadingSkeleton() {
   );
 }
 
+function formatExecutionTime(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
+}
+
+/** Green "query executed successfully" banner shown when a query returns no rows. */
+function QuerySuccessBanner({ result }: { result: { isSelect?: boolean; rowCount?: number; affectedRows?: number; executionTimeMs?: number } }) {
+  const rows = result.isSelect ? result.rowCount : (result.affectedRows ?? 0);
+  const message = result.isSelect
+    ? `Query executed successfully, returned ${rows} row${rows === 1 ? "" : "s"}`
+    : `Query executed successfully, ${rows} row${rows === 1 ? "" : "s"} affected`;
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-success/50 bg-success/10 px-4 py-3">
+      <div className="flex items-center gap-2 text-sm">
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+        <span className="font-medium text-success">Success</span>
+        <span className="text-success-foreground/70">{message}</span>
+      </div>
+      <span className="shrink-0 text-xs text-success tabular-nums">{formatExecutionTime(result.executionTimeMs ?? 0)}</span>
+    </div>
+  );
+}
+
 export function ResultsViewer({
   result, error, loading, schema, table, onRefresh, enableCRUD, readOnly, connectionId, pkColumns, columnsMeta, onAddColumn
 }: ResultsViewerProps) {
@@ -186,9 +209,10 @@ export function ResultsViewer({
 
   useEffect(() => { setLocalRows(null); setSelectedRows(new Set()); }, [result]);
 
-  // Close the right sidebar if this grid unmounts while the editor is open.
+  // Don't close the right sidebar when this grid unmounts (tab switch) — just
+  // drop its row-editor content so the panel falls back to its default state.
   useEffect(() => {
-    return () => rightSidebar.clearRight();
+    return () => rightSidebar.setContent(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -491,13 +515,6 @@ export function ResultsViewer({
         if (!exportSlot) return null;
         return createPortal(exportMenu, exportSlot);
       })()}
-      {!canEdit && (
-        <div className="shrink-0 border-b border-border bg-card/80 backdrop-blur-sm px-4 py-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {exportMenu}
-          </div>
-        </div>
-      )}
       {hasRows ? (
         <>
           <div className="flex-1 overflow-auto">
@@ -634,8 +651,14 @@ export function ResultsViewer({
           </div>
         </>
       ) : (
-        <div className="flex h-full items-center justify-center">
-          <span className="text-sm text-muted-foreground">{schema && table ? "This table contains no rows" : "Query returned no rows"}</span>
+        <div className="flex h-full items-center justify-center px-4">
+          {schema && table ? (
+            <span className="text-sm text-muted-foreground">This table contains no rows</span>
+          ) : (
+            <div className="w-full max-w-lg">
+              <QuerySuccessBanner result={displayResult} />
+            </div>
+          )}
         </div>
       )}
       {canEdit && pendingChanges.length > 0 && (() => {
