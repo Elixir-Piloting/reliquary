@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { MainLayout } from "@/components/main-layout";
 import { DatabaseNavbar } from "@/components/database-navbar";
 import { TableTabs, type TableTab } from "@/components/table-tabs";
 import { TableEditor } from "@/components/table-editor";
@@ -193,12 +192,11 @@ export default function DatabaseView() {
   const isEditorTab = activeTab?.type === "create" || activeTab?.type === "edit";
 
   return (
-    <MainLayout>
-      <div className="flex flex-col h-full">
-        <DatabaseNavbar connectionId={connectionId || ""} />
-        <div className="flex flex-1 overflow-hidden">
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <TableTabs tabs={tableTabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} />
+    <div className="flex flex-col h-full">
+      <DatabaseNavbar connectionId={connectionId || ""} />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <TableTabs tabs={tableTabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} />
             {activeTab && isEditorTab ? (
               <TableEditor
                 mode={activeTab.type === "create" ? "create" : "edit"}
@@ -276,6 +274,5 @@ export default function DatabaseView() {
           </div>
         </div>
       </div>
-    </MainLayout>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { MainLayout } from "@/components/main-layout";
 import { DatabaseNavbar } from "@/components/database-navbar";
 import { SQLEditor } from "@/components/sql-editor";
 import { ResultsViewer } from "@/components/results-viewer";
@@ -169,10 +168,9 @@ export default function QueryView() {
   const showingExplain = explainResult !== null || explainError !== null || explainLoading;
 
   return (
-    <MainLayout>
-      <div className="flex flex-col h-full">
-        <DatabaseNavbar connectionId={connectionId || ""} />
-        <QueryTabs tabs={queryTabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} onTabRename={renameTab} />
+    <div className="flex flex-col h-full">
+      <DatabaseNavbar connectionId={connectionId || ""} />
+      <QueryTabs tabs={queryTabs} activeTabId={activeTabId} onTabSelect={setActiveTabId} onTabClose={closeTab} onTabRename={renameTab} />
         <div className="flex flex-col flex-1 min-h-0">
           <div className="h-12 border-b border-border flex items-center gap-2 px-4 shrink-0 overflow-x-auto">
             <Button onClick={handleExecute} disabled={loading || !currentQuery.trim()}>
@@ -229,10 +227,9 @@ export default function QueryView() {
             )}
           </div>
         </div>
-      </div>
       <QueryConfirmationDialog open={showConfirmation} onOpenChange={setShowConfirmation} query={pendingQuery || ""}
         onConfirm={() => { setShowConfirmation(false); executeQuery(pendingQuery!, true); setPendingQuery(null); }}
         onCancel={() => { setShowConfirmation(false); setPendingQuery(null); }} />
-    </MainLayout>
+    </div>
   );
 }
