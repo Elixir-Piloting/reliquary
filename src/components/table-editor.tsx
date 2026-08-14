@@ -41,6 +41,7 @@ interface NewColumn {
 }
 
 interface ForeignKeyDraft {
+  id: string;
   column: string;
   refSchema: string;
   refTable: string;
@@ -54,7 +55,29 @@ const nextId = () => `col-${Date.now()}-${idCounter++}`;
 
 const emptyColumn = (): NewColumn => ({ id: nextId(), name: "", type: "TEXT", nullable: true, defaultValue: "", primaryKey: false, autoIncrement: false, unique: false });
 
-const emptyFk = (schema: string): ForeignKeyDraft => ({ column: "", refSchema: schema, refTable: "", refColumn: "", onDelete: "NO ACTION", onUpdate: "NO ACTION" });
+const emptyFk = (schema: string): ForeignKeyDraft => ({ id: nextId(), column: "", refSchema: schema, refTable: "", refColumn: "", onDelete: "NO ACTION", onUpdate: "NO ACTION" });
+
+/** A default-value input that adapts to the column type. */
+function DefaultValueControl({ type, value, nullable, onChange }: { type: string; value: string; nullable: boolean; onChange: (v: string) => void }) {
+  const t = type.toUpperCase();
+  if (t === "BOOLEAN" || t === "BOOL") {
+    return (
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="NULL" /></SelectTrigger>
+        <SelectContent>
+          {nullable && <SelectItem value="">NULL</SelectItem>}
+          <SelectItem value="true">true</SelectItem>
+          <SelectItem value="false">false</SelectItem>
+        </SelectContent>
+      </Select>
+    );
+  }
+  if (t === "DATE") return <Input type="date" value={value} onChange={e => onChange(e.target.value)} className="h-8 text-sm" />;
+  if (t === "TIME") return <Input type="time" value={value} onChange={e => onChange(e.target.value)} className="h-8 text-sm" />;
+  if (t === "TIMESTAMP" || t === "TIMESTAMPTZ") return <Input type="datetime-local" value={value} onChange={e => onChange(e.target.value)} className="h-8 text-sm" />;
+  if (/INT|SERIAL|NUMERIC|DECIMAL|REAL|DOUBLE|SMALLINT|BIGINT|FLOAT/.test(t)) return <Input type="number" value={value} onChange={e => onChange(e.target.value)} placeholder="none" className="h-8 text-sm" />;
+  return <Input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder="none" className="h-8 text-sm" />;
+}
 
 interface ColumnRowProps {
   col: NewColumn;
@@ -97,7 +120,7 @@ function ColumnRow({ col, index, total, isCreate, saving, onUpdate, onRemove, on
         </Select>
       </div>
       <div className={cellClass}>
-        <Input value={col.defaultValue} onChange={e => onUpdate(index, "defaultValue", e.target.value)} placeholder="none" className="h-8 text-sm" />
+        <DefaultValueControl type={col.type} value={col.defaultValue} nullable={col.nullable} onChange={v => onUpdate(index, "defaultValue", v)} />
       </div>
       <div className={cellClass + " flex items-center gap-3"}>
         <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Primary key">
@@ -147,11 +170,10 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const [editing, setEditing] = useState<{ col: string; field: "name" | "default" } | null>(null);
   const [draft, setDraft] = useState("");
 
-  // Foreign keys (UI only for now).
+  // Foreign keys (UI only for now). Each FK is an editable inline row.
   const [fkDrafts, setFkDrafts] = useState<ForeignKeyDraft[]>([]);
-  const [fkForm, setFkForm] = useState<ForeignKeyDraft>(() => emptyFk(schema));
   const [refTables, setRefTables] = useState<TableInfo[]>([]);
-  const [refColumns, setRefColumns] = useState<ColumnInfo[]>([]);
+  const [refColumnsByTable, setRefColumnsByTable] = useState<Record<string, ColumnInfo[]>>({});
 
   const reload = useCallback(async () => {
     if (!table) return;
@@ -177,18 +199,28 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
       .catch(() => setRefTables([]));
   }, [isCreate, connectionId, schema]);
 
-  useEffect(() => {
-    if (!fkForm.refTable) { setRefColumns([]); return; }
-    invoke<ColumnInfo[]>("get_columns", { connectionId, schema: fkForm.refSchema, table: fkForm.refTable })
-      .then(cs => { setRefColumns(cs || []); setFkForm(f => ({ ...f, refColumn: "" })); })
-      .catch(() => setRefColumns([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fkForm.refTable, fkForm.refSchema, connectionId]);
-
   const addColumn = () => setColumns(prev => [...prev, emptyColumn()]);
   const removeColumn = (i: number) => setColumns(prev => prev.filter((_, idx) => idx !== i));
   const updateColumn = (i: number, field: keyof NewColumn, value: any) =>
     setColumns(prev => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
+
+  /** Load (and cache) the columns of a reference table for the FK dropdowns. */
+  const loadRefColumns = useCallback(async (tableName: string) => {
+    if (!tableName || refColumnsByTable[tableName]) return;
+    try {
+      const cs = await invoke<ColumnInfo[]>("get_columns", { connectionId, schema, table: tableName });
+      setRefColumnsByTable(prev => ({ ...prev, [tableName]: cs || [] }));
+    } catch {
+      setRefColumnsByTable(prev => ({ ...prev, [tableName]: [] }));
+    }
+  }, [connectionId, schema, refColumnsByTable]);
+
+  const updateFk = (i: number, field: keyof ForeignKeyDraft, value: string) =>
+    setFkDrafts(prev => prev.map((fk, idx) => idx === i ? { ...fk, [field]: value } : fk));
+
+  const addFk = () => setFkDrafts(prev => [...prev, emptyFk(schema)]);
+
+  const removeFk = (i: number) => setFkDrafts(prev => prev.filter((_, idx) => idx !== i));
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
@@ -296,12 +328,6 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
       ? `ALTER TABLE "${schema}"."${table}" ALTER COLUMN "${col.columnName}" SET NOT NULL;`
       : `ALTER TABLE "${schema}"."${table}" ALTER COLUMN "${col.columnName}" DROP NOT NULL;`;
     await runAlter(sql, `"${col.columnName}" ${col.isNullable ? "set NOT NULL" : "nullable"}`);
-  };
-
-  const addFk = () => {
-    const fk = { ...fkForm };
-    setFkDrafts(prev => [...prev, fk]);
-    setFkForm(emptyFk(schema));
   };
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
@@ -449,59 +475,48 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
                 <div className={cellClass} />
               </div>
               {fkDrafts.map((fk, i) => (
-                <div key={i} className={FK_GRID + " grid items-center gap-2 py-1 text-sm"}>
-                  <div className={cellClass + " font-mono"}>{fk.column || "—"}</div>
-                  <div className={cellClass + " font-mono"}>{fk.refTable ? `${fk.refSchema}.${fk.refTable}` : "—"}</div>
-                  <div className={cellClass + " font-mono"}>{fk.refColumn || "—"}</div>
-                  <div className={cellClass + " text-xs"}>{fk.onDelete}</div>
-                  <div className={cellClass + " text-xs"}>{fk.onUpdate}</div>
+                <div key={fk.id} className={FK_GRID + " grid items-center gap-2 py-1 text-sm"}>
+                  <div className={cellClass}>
+                    <Select value={fk.column} onValueChange={v => updateFk(i, "column", v)}>
+                      <SelectTrigger className="h-8"><SelectValue placeholder="Column" /></SelectTrigger>
+                      <SelectContent>
+                        {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className={cellClass}>
+                    <Select value={fk.refTable} onValueChange={v => { updateFk(i, "refTable", v); updateFk(i, "refColumn", ""); loadRefColumns(v); }}>
+                      <SelectTrigger className="h-8"><SelectValue placeholder="Ref table" /></SelectTrigger>
+                      <SelectContent>
+                        {refTables.map(t => <SelectItem key={t.tableName} value={t.tableName}>{t.tableName}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className={cellClass}>
+                    <Select value={fk.refColumn} onValueChange={v => updateFk(i, "refColumn", v)} disabled={!fk.refTable}>
+                      <SelectTrigger className="h-8"><SelectValue placeholder="Ref column" /></SelectTrigger>
+                      <SelectContent>
+                        {(refColumnsByTable[fk.refTable] || []).map(c => <SelectItem key={c.columnName} value={c.columnName}>{c.columnName}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className={cellClass}>
+                    <Select value={fk.onDelete} onValueChange={v => updateFk(i, "onDelete", v)}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className={cellClass}>
+                    <Select value={fk.onUpdate} onValueChange={v => updateFk(i, "onUpdate", v)}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
                   <div className={cellClass + " flex items-center justify-end"}>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => setFkDrafts(prev => prev.filter((_, idx) => idx !== i))} title="Remove foreign key"><X className="h-4 w-4" /></Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => removeFk(i)} title="Remove foreign key"><X className="h-4 w-4" /></Button>
                   </div>
                 </div>
               ))}
-              {/* Inline add row — same grid as the drafts */}
-              <div className={FK_GRID + " grid items-center gap-2 py-1 text-sm"}>
-                <div className={cellClass}>
-                  <Select value={fkForm.column} onValueChange={v => setFkForm(f => ({ ...f, column: v }))}>
-                    <SelectTrigger className="h-8"><SelectValue placeholder="Column" /></SelectTrigger>
-                    <SelectContent>
-                      {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className={cellClass}>
-                  <Select value={fkForm.refTable} onValueChange={v => setFkForm(f => ({ ...f, refTable: v }))}>
-                    <SelectTrigger className="h-8"><SelectValue placeholder="Ref table" /></SelectTrigger>
-                    <SelectContent>
-                      {refTables.map(t => <SelectItem key={t.tableName} value={t.tableName}>{t.tableName}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className={cellClass}>
-                  <Select value={fkForm.refColumn} onValueChange={v => setFkForm(f => ({ ...f, refColumn: v }))} disabled={!fkForm.refTable}>
-                    <SelectTrigger className="h-8"><SelectValue placeholder="Ref column" /></SelectTrigger>
-                    <SelectContent>
-                      {refColumns.map(c => <SelectItem key={c.columnName} value={c.columnName}>{c.columnName}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className={cellClass}>
-                  <Select value={fkForm.onDelete} onValueChange={v => setFkForm(f => ({ ...f, onDelete: v }))}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON DELETE" /></SelectTrigger>
-                    <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className={cellClass}>
-                  <Select value={fkForm.onUpdate} onValueChange={v => setFkForm(f => ({ ...f, onUpdate: v }))}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="ON UPDATE" /></SelectTrigger>
-                    <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className={cellClass + " flex items-center justify-end"}>
-                  <Button variant="ghost" size="icon" onClick={() => setFkForm(emptyFk(schema))} className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Clear foreign key"><X className="h-4 w-4" /></Button>
-                </div>
-              </div>
               <Button variant="outline" size="sm" onClick={addFk}><Plus className="h-4 w-4 mr-1" />Add Foreign Key</Button>
             </div>
           )}
