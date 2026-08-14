@@ -434,6 +434,9 @@ export function ResultsViewer({
       setPendingChanges([]);
       setSelectedRows(new Set());
       setShowReviewSheet(false);
+      // The review panel effect bails once showReviewSheet is false, so clear
+      // the sidebar content here — otherwise it stays frozen on "Applying…".
+      rightSidebar.setContent(null);
       if (onRefresh) onRefresh();
     } catch (e: any) {
       toast.error("Apply failed", { description: String(e) });
