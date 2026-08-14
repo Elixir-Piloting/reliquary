@@ -2,7 +2,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { SchemaExplorer } from "@/components/schema-explorer";
-import { TitleBar } from "@/components/title-bar";
 import { SidebarProvider, useSidebar } from "@/components/sidebar-context";
 import { RightSidebarProvider, useRightSidebar } from "@/components/right-sidebar-context";
 import { RightSidebar } from "@/components/right-sidebar";
@@ -91,9 +90,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-background">
-      <TitleBar />
-      <div className="flex flex-1 overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       <div className={cn("border-r flex flex-col relative group shrink-0 border-border",
         sidebarCollapsed ? "w-0 overflow-hidden" : "",
         sidebarResizing ? "transition-none" : "transition-all duration-200 ease-in-out")} style={!sidebarCollapsed ? { width: sidebarWidth, maxWidth: 420, minWidth: 330 } : undefined}>
@@ -182,7 +179,6 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </RightSidebar>
-      </div>
     </div>
   );
 }
