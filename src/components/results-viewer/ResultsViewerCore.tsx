@@ -612,6 +612,7 @@ export function ResultsViewer({
             canEdit={!!canEdit}
             onStagedChange={handleStagedChange}
             onRequestDelete={handleGridDelete}
+            onOpenRow={handleRowClick}
             stagedPkKeys={stagedPkKeys}
             enumValues={enumCache}
             hiddenColumns={hiddenColumns}

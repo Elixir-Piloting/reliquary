@@ -7,6 +7,7 @@ import {
   type DataEditorRef,
   type GridCell,
   type Item,
+  type EditableGridCell,
   type EditListItem,
   type GridSelection,
 } from "@glideapps/glide-data-grid";
@@ -28,23 +29,16 @@ interface GlideDataGridProps {
   canEdit?: boolean;
   onStagedChange: (change: PendingChange) => void;
   onRequestDelete: (changes: PendingChange[]) => void;
+  onOpenRow: (row: Record<string, unknown>) => void;
   stagedPkKeys: Set<string>; // PK keys whose rows have staged changes
   enumValues?: Record<string, string[] | null>;
   hiddenColumns?: Set<string>;
 }
 
-/**
- * Canvas data grid (Glide). Interaction model:
- * - click / drag selects cells (range select); double-click or Enter edits.
- * - the first column is frozen/anchored so it stays visible while scrolling.
- * - column headers drag to resize; double-clicking a header auto-fits (Glide).
- * - row deletion only happens when the user explicitly presses Delete over a
- *   selection, which opens the confirm dialog (never on a mere selection change).
- */
 export function GlideDataGrid(props: GlideDataGridProps) {
   const {
     rows, columns, schema, table, pkColumns = [], columnsMeta = [],
-    canEdit, onStagedChange, onRequestDelete, stagedPkKeys,
+    canEdit, onStagedChange, onRequestDelete, onOpenRow, stagedPkKeys,
     enumValues = {}, hiddenColumns,
   } = props;
   const ref = useRef<DataEditorRef>(null);
@@ -67,7 +61,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
     () => visibleCols.map(c => ({
       title: c.name,
       id: c.name,
-      width: Math.max(140, Math.min(c.name.length * 8 + 60, 260)),
+      width: Math.max(150, Math.min(c.name.length * 9 + 60, 280)),
     })),
     [visibleCols]
   );
@@ -84,32 +78,53 @@ export function GlideDataGrid(props: GlideDataGridProps) {
     [visibleCols, rows, metaByCol, canEdit]
   );
 
-  const onCellsEdited = useCallback(
-    (newValues: readonly EditListItem[]) => {
+  // Single-cell edit (double-click/Enter). Edits are parameterized, never
+  // string-built SQL.
+  const onCellEdited = useCallback(
+    (cell: Item, newValue: EditableGridCell) => {
       if (!canEdit || !schema || !table) return;
-      for (const edit of newValues) {
-        const [cIdx, rIdx] = edit.location;
-        const col = visibleCols[cIdx];
-        const row = rows[rIdx];
-        if (!col || !row) continue;
-        const meta = metaByCol.get(col.name);
-        const change = buildUpdateChange({
-          schema,
-          table,
-          row,
-          columnName: col.name,
-          dataType: meta?.dataType || col.dataType,
-          pkColumns,
-          newValue: cellEditToString(edit.value),
-        });
-        if (change) onStagedChange(change);
-      }
+      const [cIdx, rIdx] = cell;
+      const col = visibleCols[cIdx];
+      const row = rows[rIdx];
+      if (!col || !row) return;
+      const meta = metaByCol.get(col.name);
+      const change = buildUpdateChange({
+        schema,
+        table,
+        row,
+        columnName: col.name,
+        dataType: meta?.dataType || col.dataType,
+        pkColumns,
+        newValue: cellEditToString(newValue),
+      });
+      if (change) onStagedChange(change);
     },
     [canEdit, schema, table, visibleCols, rows, metaByCol, pkColumns, onStagedChange]
   );
 
-  // Deletion is triggered ONLY by the user pressing Delete over a selection.
-  // Store the selection and show the confirm dialog; never fire on selection change.
+  // Batch edit callback (e.g. paste) — also supported.
+  const onCellsEdited = useCallback(
+    (newValues: readonly EditListItem[]) => {
+      for (const edit of newValues) onCellEdited(edit.location, edit.value);
+    },
+    [onCellEdited]
+  );
+
+  // Single-click a data cell -> open the row in the inspector for editing there.
+  // Editing in the grid still happens via double-click (onCellEdited). Both
+  // coexist, matching the original app's behavior.
+  const openRow = useCallback(
+    (cell: Item) => {
+      const [cIdx, rIdx] = cell;
+      if (cIdx < 0 || rIdx < 0) return;
+      if (cIdx >= visibleCols.length) return;
+      const row = rows[rIdx];
+      if (row) onOpenRow(row);
+    },
+    [rows, onOpenRow, visibleCols.length]
+  );
+
+  // Deletion is triggered ONLY by an explicit Delete keypress over a selection.
   const handleDeleteRequest = useCallback((sel: GridSelection) => {
     if (!canEdit || !schema || !table) return true;
     if (sel.rows.length > 0) setPendingDelete(sel);
@@ -155,15 +170,17 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           columns={gridColumns}
           rows={rows.length}
           getCellContent={getCellContent}
+          onCellEdited={onCellEdited}
           onCellsEdited={onCellsEdited}
+          onCellClicked={openRow}
           onDelete={handleDeleteRequest}
           rangeSelect="rect"
-          rowSelect="none"
+          rowSelect="multi"
           columnSelect="none"
-          rowMarkers="none"
+          rowMarkers={{ kind: canEdit ? "checkbox-visible" : "number", width: 40 }}
           freezeColumns={1}
-          rowHeight={30}
-          headerHeight={32}
+          rowHeight={32}
+          headerHeight={34}
           minColumnWidth={100}
           maxColumnWidth={600}
         />

@@ -16,14 +16,17 @@ implementation is still present and can be restored by flipping the flag.
 | 1h | arrays | JSON text display | Glide `Text` cell (JSON text, never blank) | ✅ |
 | 1i | enum | inline select of values | Glide `Text` cell (custom editor not yet wired — see flags) | ⚠️ |
 | 1j | unknown/custom | plain text | Glide `Text` cell | ✅ |
-| 2a | inline cell editing | input/select on dbl-click | Glide built-in editor (dbl-click/Enter) | ✅ |
+| 2a | inline cell editing | input/select on dbl-click | Glide built-in editor (dbl-click/Enter) via `onCellEdited` | ✅ |
 | 2b | parameterized edits (no string-built SQL) | UPDATE ... SET col=$1 WHERE pk=$2 | Same via `buildUpdateChange` + `toSqlParamValue` | ✅ |
 | 2c | staged-edit amber highlight | amber bg/ring on cell | Not yet rendered in Glide (see flags) | ⚠️ |
-| 3a | row selection (checkbox) | checkbox column | Replaced by cell selection (`rangeSelect=rect`); no row-marker checkboxes | ✅ |
+| 3a | row selection (checkbox) | checkbox column | Glide row markers (checkbox-visible) — selects rows, no delete prompt | ✅ |
 | 3b | delete confirmation dialog | ConfirmDialog | Glide `onDelete` (Delete key) + ConfirmDialog | ✅ |
 | 3c | parameterized delete by PK | DELETE ... WHERE pk=$1 | Same via `buildDeleteChange` | ✅ |
 | — | cell select + drag-to-select | — | Glide `rangeSelect="rect"` | ✅ |
+| — | double-click edit | — | Glide `onCellEdited` (singular) + `allowOverlay` | ✅ |
+| — | row inspector on single click | — | Glide `onCellClicked` → `onOpenRow` | ✅ |
 | — | anchored/frozen id column | sticky left id col | Glide `freezeColumns=1` | ✅ |
+| — | column drag-to-resize | — | Glide built-in resize (columns have `width`) | ✅ |
 | — | delete only on explicit Delete key | — | `onDelete` fires only on Delete; never on selection change | ✅ |
 | 4a | insert row | inspector insert mode | Glide grid uses inspector insert (button remains) | ⚠️ |
 | 4b | identity columns excluded on insert | excluded | Same via `buildInsertChange` | ✅ |
