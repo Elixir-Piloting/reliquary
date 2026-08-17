@@ -310,9 +310,8 @@ export function ResultsViewer({
 
   const handleRowClick = (row: Record<string, unknown>) => {
     if (!canEdit) return;
-    // Bake the latest staged (uncommitted) values into the row so the inspector
-    // always opens with what's currently on screen — never stale DB values.
-    rightSidebar.setOpen(true);
+    // Set the row-inspector content without forcing the sidebar open (the
+    // editor effect updates the content; opening is a separate user action).
     setEditor({ mode: 'edit', row: applyStagedToRow(row) });
   };
 

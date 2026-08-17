@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   DataEditor,
   GridColumn,
@@ -46,32 +46,11 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   const dark = isDarkMode();
   const [pendingDelete, setPendingDelete] = useState<GridSelection | null>(null);
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
-  const [viewportRows, setViewportRows] = useState(0);
-
-  // Fill the visible area with empty rows when there's less data than fits.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const update = () => {
-      const h = el.clientHeight;
-      const rowH = 34; // must match rowHeight
-      const header = 34; // must match headerHeight
-      const visible = Math.max(0, Math.floor((h - header) / rowH));
-      setViewportRows(visible);
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   const visibleCols = useMemo(
     () => columns.filter(c => !hiddenColumns || !hiddenColumns.has(c.name)),
     [columns, hiddenColumns]
   );
-
-  // Total rows = data rows, padded with empty rows to fill the viewport.
-  const totalRows = useMemo(() => Math.max(rows.length, viewportRows), [rows.length, viewportRows]);
 
   const metaByCol = useMemo(() => {
     const m = new Map<string, { columnName: string; dataType: string; isIdentity?: boolean }>();
@@ -102,7 +81,6 @@ export function GlideDataGrid(props: GlideDataGridProps) {
       const col = visibleCols[cell[0]];
       if (!col) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: false, readonly: true };
       const row = rows[cell[1]];
-      // Empty fill rows (beyond data) render as inert, read-only empty cells.
       if (!row) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: false, readonly: true };
       const meta = metaByCol.get(col.name);
       const value = row[col.name];
@@ -201,7 +179,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           ref={ref}
           theme={glideTheme(dark)}
           columns={gridColumns}
-          rows={totalRows}
+          rows={rows.length}
           getCellContent={getCellContent}
           onCellEdited={onCellEdited}
           onCellsEdited={onCellsEdited}
@@ -211,7 +189,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           rangeSelect="rect"
           rowSelect="multi"
           columnSelect="none"
-          rowMarkers="none"
+          rowMarkers={{ kind: canEdit ? "checkbox-visible" : "number", width: 40 }}
           freezeColumns={1}
           smoothScrollX
           smoothScrollY
