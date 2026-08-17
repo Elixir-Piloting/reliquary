@@ -107,7 +107,8 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
       setPasswordForServer(null);
     } catch (e) {
       // Keep the dialog open so the user can retry with a different password.
-      toast.error(e instanceof Error ? e.message : "Failed to connect", { description: "Check your password and try again." });
+      console.error("[local-pg] listLocalDatabases ERROR:", e);
+      toast.error(String(e), { description: "Check your password and try again." });
     }
     setLoadingDb(null);
   };

@@ -30,7 +30,8 @@ export default function LocalPostgresSelectionPage() {
           Persistence.removeServerPassword(u.hostname, Number(u.port || 5432));
         } catch { /* ignore */ }
       }
-      toast.error("Connection failed", { description: String(e) });
+      console.error("[local-pg] connect ERROR:", e);
+      toast.error(String(e));
     }
   };
 
