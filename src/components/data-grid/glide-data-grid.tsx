@@ -90,8 +90,8 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   );
 
   // Persist freeform column resizing.
-  const onColumnResize = useCallback((_col: GridColumn, newSize: number, _colIndex: number, _withGrow: number) => {
-    setColWidths(prev => ({ ...prev, [_col.id ?? String(_colIndex)]: newSize }));
+  const onColumnResize = useCallback((col: GridColumn, newSize: number, colIndex: number) => {
+    setColWidths(prev => ({ ...prev, [col.id ?? String(colIndex)]: newSize }));
   }, []);
 
   const getCellContent = useCallback(
