@@ -389,7 +389,20 @@ export function ResultsViewer({
 
   // Single-change variant used by the Glide grid's inline edits / inserts.
   const handleStagedChange = (change: PendingChange) => {
-    setPendingChanges(prev => [...prev, change]);
+    setPendingChanges(prev => {
+      if (change.op === "update" && change.pkValues && Object.keys(change.pkValues).length > 0) {
+        // Replace any existing staged edit for the same row + column so repeated
+        // edits (e.g. toggling a boolean) don't pile up duplicate changes.
+        const key = `${JSON.stringify(change.pkValues)}:${change.columnName}`;
+        const idx = prev.findIndex(c => c.op === "update" && `${JSON.stringify(c.pkValues)}:${c.columnName}` === key);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = change;
+          return next;
+        }
+      }
+      return [...prev, change];
+    });
     const verb = change.op === "update" ? "Edit" : change.op === "insert" ? "Insert" : "Delete";
     toast.info(`${verb} staged — review & apply to commit`);
   };
@@ -401,6 +414,23 @@ export function ResultsViewer({
     }
     return keys;
   }, [pendingChanges]);
+
+  // Per-row staged updates so the grid overlays them (row index -> col -> value).
+  const stagedByRow = useMemo(() => {
+    const map = new Map<number, Record<string, string>>();
+    for (let i = 0; i < (sortedRows?.length ?? 0); i++) {
+      const row = sortedRows[i];
+      for (const c of pendingChanges) {
+        if (c.op !== "update" || !c.columnName) continue;
+        if (Object.entries(c.pkValues).every(([k, v]) => row?.[k] === v)) {
+          const cur = map.get(i) ?? {};
+          cur[c.columnName] = String(c.newValue ?? "");
+          map.set(i, cur);
+        }
+      }
+    }
+    return map;
+  }, [pendingChanges, sortedRows]);
 
   const handleGridDelete = (changes: PendingChange[]) => {
     setPendingChanges(prev => [...prev, ...changes]);
@@ -613,6 +643,7 @@ export function ResultsViewer({
             onRequestDelete={handleGridDelete}
             onOpenRow={handleRowClick}
             stagedPkKeys={stagedPkKeys}
+            stagedByRow={stagedByRow}
             enumValues={enumCache}
             hiddenColumns={hiddenColumns}
           />

@@ -29,6 +29,11 @@ export function buildUpdateChange(input: CellEditInput): PendingChange | null {
   const pkValues = getPkValues(row, pkColumns);
   if (Object.keys(pkValues).length === 0) return null; // no PK -> can't update
 
+  // Skip no-op edits: if the new value equals the cell's current value, don't
+  // stage a change (prevents staging identical values on click/blur).
+  const current = row[columnName] == null ? "" : String(row[columnName]);
+  if (newValue === current) return null;
+
   const pkEntries = Object.entries(pkValues);
   const whereClause = pkEntries.map(([k], i) => `"${k}" = $${i + 2}`).join(" AND ");
   return {
@@ -138,6 +143,8 @@ export function cellEditToString(cell: EditableGridCell): string {
       return cell.data === undefined ? "" : String(cell.data);
     case GridCellKind.Boolean:
       return cell.data === true ? "true" : cell.data === false ? "false" : "";
+    case GridCellKind.Custom:
+      return (cell as unknown as { data?: { display?: string } }).data?.display ?? "";
     default:
       return (cell as { data?: string }).data ?? "";
   }

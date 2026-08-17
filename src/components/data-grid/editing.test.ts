@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { GridCellKind } from "@glideapps/glide-data-grid";
-import { toGridCell } from "../data-grid/cell-mapping";
+import { toGridCell, toBoolean } from "../data-grid/cell-mapping";
 import {
   buildUpdateChange,
   buildInsertChange,
@@ -66,6 +66,34 @@ describe("buildUpdateChange (parameterized edit)", () => {
 
   it("returns null when row has no PK", () => {
     expect(buildUpdateChange({ ...base, row: { name: "x" }, newValue: "y" })).toBeNull();
+  });
+
+  it("returns null when the new value equals the current value (no-op)", () => {
+    expect(buildUpdateChange({ ...base, newValue: "old" })).toBeNull();
+  });
+});
+
+describe("toBoolean (Postgres bool normalization)", () => {
+  it("handles the string 'false' as false (not truthy)", () => {
+    expect(toBoolean("false")).toBe(false);
+    expect(toBoolean(false)).toBe(false);
+    expect(toBoolean("0")).toBe(false);
+    expect(toBoolean("")).toBe(false);
+    expect(toBoolean(null)).toBe(false);
+  });
+
+  it("handles true forms", () => {
+    expect(toBoolean("true")).toBe(true);
+    expect(toBoolean(true)).toBe(true);
+    expect(toBoolean("1")).toBe(true);
+    expect(toBoolean("t")).toBe(true);
+  });
+
+  it("renders a boolean cell with the correct data value", () => {
+    const falseCell = toGridCell("false", "bool") as { data: unknown };
+    expect(falseCell.data).toBe(false);
+    const trueCell = toGridCell("true", "bool") as { data: unknown };
+    expect(trueCell.data).toBe(true);
   });
 });
 

@@ -30,7 +30,7 @@ export function toGridCell(
   if (dt === "boolean" || dt === "bool") {
     return {
       kind: GridCellKind.Boolean,
-      data: value === null || value === undefined ? false : !!value,
+      data: toBoolean(value),
       readonly,
       allowOverlay: false,
     };
@@ -86,6 +86,19 @@ function formatValueForCellInput(value: unknown, dataType: string): string {
 }
 
 export { isNumericType, isPotentialEnum };
+
+/**
+ * Interpret a Postgres bool value that may arrive as a real boolean or as the
+ * string forms "true"/"false"/"1"/"0"/"t"/"f". Avoids the classic `!!"false"`
+ * truthy-string bug that made booleans always render checked.
+ */
+export function toBoolean(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "boolean") return value;
+  const s = String(value).toLowerCase().trim();
+  if (s === "true" || s === "1" || s === "t" || s === "yes" || s === "on") return true;
+  return false;
+}
 
 export function isBooleanType(dataType: string): boolean {
   const dt = dataType.toLowerCase();

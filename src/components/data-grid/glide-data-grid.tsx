@@ -13,7 +13,9 @@ import {
 } from "@glideapps/glide-data-grid";
 import { glideTheme } from "./glide-theme";
 import { toGridCell } from "./cell-mapping";
+import { typedCellRenderer, type TypedCell, type TypedCellData } from "./custom-editors";
 import { buildUpdateChange, cellEditToString } from "./editing";
+import { isPotentialEnum } from "@/components/results-viewer/field-types";
 import type { PendingChange } from "@/components/results-viewer/types";
 import { isDarkMode } from "./use-dark";
 import { ConfirmDialog } from "@/components/results-viewer/confirm-dialog";
@@ -30,6 +32,8 @@ interface GlideDataGridProps {
   onStagedChange: (change: PendingChange) => void;
   onRequestDelete: (changes: PendingChange[]) => void;
   onOpenRow: (row: Record<string, unknown>) => void;
+  /** Staged (uncommitted) edits per row: rowIndex -> { columnName -> canonical string }. */
+  stagedByRow?: Map<number, Record<string, string>>;
   stagedPkKeys: Set<string>; // PK keys whose rows have staged changes
   enumValues?: Record<string, string[] | null>;
   hiddenColumns?: Set<string>;
@@ -39,7 +43,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   const {
     rows, columns, schema, table, pkColumns = [], columnsMeta = [],
     canEdit, onStagedChange, onRequestDelete, onOpenRow, stagedPkKeys,
-    enumValues = {}, hiddenColumns,
+    stagedByRow, enumValues = {}, hiddenColumns,
   } = props;
   const ref = useRef<DataEditorRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,13 +84,51 @@ export function GlideDataGrid(props: GlideDataGridProps) {
     (cell: Item): GridCell => {
       const col = visibleCols[cell[0]];
       if (!col) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: false, readonly: true };
-      const row = rows[cell[1]];
+      const rowIdx = cell[1];
+      const row = rows[rowIdx];
       if (!row) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: false, readonly: true };
       const meta = metaByCol.get(col.name);
-      const value = row[col.name];
-      return toGridCell(value, meta?.dataType || col.dataType, { readonly: !canEdit });
+      const dataType = meta?.dataType || col.dataType;
+      const dt = dataType.toLowerCase();
+      // Overlay any staged (uncommitted) edit for this cell so it reflects
+      // immediately (booleans, text, etc.) instead of reverting to the DB value.
+      const stagedVal = stagedByRow?.get(rowIdx)?.[col.name];
+      const isStaged = stagedVal !== undefined;
+      const value = isStaged ? stagedVal : row[col.name];
+
+      // Amber highlight for staged (uncommitted) cells.
+      const stagedTheme = isStaged
+        ? {
+            bgCell: dark ? "rgba(245,158,11,0.14)" : "rgba(245,158,11,0.14)",
+            textDark: dark ? "#fcd34d" : "#92400e",
+            textMedium: dark ? "#fcd34d" : "#92400e",
+            textLight: dark ? "#fcd34d" : "#92400e",
+          }
+        : undefined;
+
+      // Enum / date / time columns use a custom typed cell with a dedicated editor.
+      const enumVals = enumValues[dataType] ?? null;
+      if (isPotentialEnum(dt) && enumVals && enumVals.length > 0) {
+        const cellData: TypedCellData = {
+          display: value === null || value === undefined ? "" : String(value),
+          dataType,
+          enumValues: enumVals,
+        };
+        return { kind: GridCellKind.Custom, data: cellData, copyData: cellData.display, readonly: !canEdit, allowOverlay: true, themeOverride: stagedTheme };
+      }
+      if (dt.includes("date") || dt.includes("timestamp") || dt.includes("time")) {
+        const cellData: TypedCellData = {
+          display: value === null || value === undefined ? "" : String(value),
+          dataType,
+        };
+        return { kind: GridCellKind.Custom, data: cellData, copyData: cellData.display, readonly: !canEdit, allowOverlay: true, themeOverride: stagedTheme };
+      }
+
+      const gridCell = toGridCell(value, dataType, { readonly: !canEdit });
+      if (isStaged) (gridCell as { themeOverride?: unknown }).themeOverride = stagedTheme;
+      return gridCell;
     },
-    [visibleCols, rows, metaByCol, canEdit]
+    [visibleCols, rows, metaByCol, canEdit, stagedByRow, enumValues, dark]
   );
 
   // Single-cell edit (double-click/Enter). Edits are parameterized, never
@@ -181,6 +223,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           columns={gridColumns}
           rows={rows.length}
           getCellContent={getCellContent}
+          customRenderers={[typedCellRenderer]}
           onCellEdited={onCellEdited}
           onCellsEdited={onCellsEdited}
           onCellClicked={openRow}
@@ -189,6 +232,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           rangeSelect="rect"
           rowSelect="multi"
           columnSelect="none"
+          rowSelectionMode="multi"
           rowMarkers={{ kind: canEdit ? "checkbox-visible" : "number", width: 40 }}
           freezeColumns={1}
           smoothScrollX
