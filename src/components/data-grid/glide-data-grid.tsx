@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DataEditor,
   GridColumn,
@@ -42,14 +42,36 @@ export function GlideDataGrid(props: GlideDataGridProps) {
     enumValues = {}, hiddenColumns,
   } = props;
   const ref = useRef<DataEditorRef>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const dark = isDarkMode();
   const [pendingDelete, setPendingDelete] = useState<GridSelection | null>(null);
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const [viewportRows, setViewportRows] = useState(0);
+
+  // Fill the visible area with empty rows when there's less data than fits.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      const h = el.clientHeight;
+      const rowH = 34; // must match rowHeight
+      const header = 34; // must match headerHeight
+      const visible = Math.max(0, Math.floor((h - header) / rowH));
+      setViewportRows(visible);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const visibleCols = useMemo(
     () => columns.filter(c => !hiddenColumns || !hiddenColumns.has(c.name)),
     [columns, hiddenColumns]
   );
+
+  // Total rows = data rows, padded with empty rows to fill the viewport.
+  const totalRows = useMemo(() => Math.max(rows.length, viewportRows), [rows.length, viewportRows]);
 
   const metaByCol = useMemo(() => {
     const m = new Map<string, { columnName: string; dataType: string; isIdentity?: boolean }>();
@@ -75,8 +97,10 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   const getCellContent = useCallback(
     (cell: Item): GridCell => {
       const col = visibleCols[cell[0]];
+      if (!col) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: true };
       const row = rows[cell[1]];
-      if (!col || !row) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: true };
+      // Empty fill rows (no data) render as empty cells.
+      if (!row) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: true };
       const meta = metaByCol.get(col.name);
       const value = row[col.name];
       return toGridCell(value, meta?.dataType || col.dataType, { readonly: !canEdit });
@@ -168,13 +192,13 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   }, [pendingDelete, canEdit, schema, table, rows, pkColumns, onRequestDelete]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={containerRef} className="flex h-full w-full flex-col overflow-hidden">
       <div className="flex-1 min-h-0">
         <DataEditor
           ref={ref}
           theme={glideTheme(dark)}
           columns={gridColumns}
-          rows={rows.length}
+          rows={totalRows}
           getCellContent={getCellContent}
           onCellEdited={onCellEdited}
           onCellsEdited={onCellsEdited}
@@ -186,7 +210,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           columnSelect="none"
           rowMarkers={{ kind: canEdit ? "checkbox-visible" : "number", width: 40 }}
           freezeColumns={1}
-          rowHeight={32}
+          rowHeight={34}
           headerHeight={34}
           minColumnWidth={100}
           maxColumnWidth={600}
