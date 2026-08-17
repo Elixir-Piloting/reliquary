@@ -21,6 +21,11 @@ import { useRightSidebar } from "@/components/right-sidebar-context";
 import { getInputType, formatValueForInput, toSqlParamValue, displayValueToString } from "./field-types";
 import { toCsv, toJson, downloadText } from "@/lib/export";
 import API, { type RowMutationStatement } from "@/lib/ipc-client";
+import { GlideDataGrid } from "@/components/data-grid/glide-data-grid";
+import { buildDeleteChange, buildInsertChange } from "@/components/data-grid/editing";
+
+// Feature flag: use the Glide canvas grid instead of the shadcn Table grid.
+const USE_GLIDE_GRID = true;
 
 function getSortOptions(dataType: string): { label: string; direction: 'asc' | 'desc' }[] {
   const dt = dataType?.toLowerCase() || '';
@@ -383,6 +388,28 @@ export function ResultsViewer({
     toast.info(`${changes.length} change${changes.length !== 1 ? 's' : ''} staged — review & apply to commit`);
   };
 
+  // Single-change variant used by the Glide grid's inline edits / inserts.
+  const handleStagedChange = (change: PendingChange) => {
+    setPendingChanges(prev => [...prev, change]);
+    const verb = change.op === "update" ? "Edit" : change.op === "insert" ? "Insert" : "Delete";
+    toast.info(`${verb} staged — review & apply to commit`);
+  };
+
+  const stagedPkKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const c of pendingChanges) {
+      if (c.op === "update" || c.op === "delete") keys.add(JSON.stringify(c.pkValues));
+    }
+    return keys;
+  }, [pendingChanges]);
+
+  const handleGridDelete = (changes: PendingChange[]) => {
+    setPendingChanges(prev => [...prev, ...changes]);
+    setSelectedRows(new Set());
+    setDeleteDialogOpen(false);
+    toast.info(`Staged ${changes.length} delete${changes.length !== 1 ? 's' : ''} — review & apply to commit`);
+  };
+
   const handleUnstage = (id: string) => setPendingChanges(prev => prev.filter(c => c.id !== id));
 
   const handleInsertSubmit = (statement: RowMutationStatement, values: Record<string, unknown>) => {
@@ -571,6 +598,25 @@ export function ResultsViewer({
             </TableHeader>
             <TableBody />
           </Table>
+        </div>
+      ) : USE_GLIDE_GRID && hasRows ? (
+        <div className="flex-1 min-h-0">
+          <GlideDataGrid
+            rows={paginatedRows}
+            columns={displayResult?.columns || []}
+            schema={schema}
+            table={table}
+            connectionId={connectionId}
+            pkColumns={pkColumns || []}
+            columnsMeta={columnsMeta}
+            canEdit={!!canEdit}
+            onStagedChange={handleStagedChange}
+            onRequestDelete={handleGridDelete}
+            onOpenRow={handleRowClick}
+            stagedPkKeys={stagedPkKeys}
+            enumValues={enumCache}
+            hiddenColumns={hiddenColumns}
+          />
         </div>
       ) : hasRows ? (
         <>
