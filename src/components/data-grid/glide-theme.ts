@@ -8,13 +8,13 @@ import { getDefaultTheme, type Theme } from "@glideapps/glide-data-grid";
 export function glideTheme(dark: boolean): Theme {
   const base = getDefaultTheme();
   const isDark = dark;
-  const text = isDark ? "hsl(0, 0%, 96%)" : "hsl(240, 6%, 10%)";
-  const textMuted = isDark ? "hsl(240, 5%, 55%)" : "hsl(240, 4%, 40%)";
-  const bgCell = isDark ? "hsl(240, 6%, 5%)" : "hsl(0, 0%, 100%)";
-  const bgCellMedium = isDark ? "hsl(240, 6%, 8%)" : "hsl(240, 5%, 96%)";
-  const bgHeader = isDark ? "hsl(240, 6%, 6%)" : "hsl(240, 4%, 97%)";
-  const border = isDark ? "hsl(240, 4%, 18%)" : "hsl(240, 5%, 88%)";
-  const accent = "hsl(221, 100%, 50%)"; // --primary
+  // Match the app's shadcn tokens exactly (see src/index.css).
+  const text = isDark ? "hsl(0, 0%, 96%)" : "hsl(240, 6%, 10%)";        // --foreground
+  const textMuted = isDark ? "hsl(240, 5%, 55%)" : "hsl(240, 4%, 40%)"; // --muted-foreground
+  const bgCell = isDark ? "hsl(0, 0%, 0%)" : "hsl(0, 0%, 98%)";         // --background
+  const bgHeader = isDark ? "hsl(240, 6%, 6%)" : "hsl(240, 4%, 97%)";   // --table-header
+  const border = isDark ? "hsl(240, 4%, 18%)" : "hsl(240, 5%, 88%)";    // --border
+  const accent = "hsl(221, 100%, 50%)";                                 // --primary
   const accentLight = isDark ? "hsl(221, 100%, 45%, 0.25)" : "hsl(221, 100%, 50%, 0.15)";
 
   return {
@@ -28,10 +28,10 @@ export function glideTheme(dark: boolean): Theme {
     textHeader: isDark ? "hsl(240, 5%, 55%)" : "hsl(240, 4%, 40%)",
     textHeaderSelected: text,
     bgCell,
-    bgCellMedium,
+    bgCellMedium: bgHeader,
     bgHeader,
     bgHeaderHasFocus: bgHeader,
-    bgHeaderHovered: bgCellMedium,
+    bgHeaderHovered: isDark ? "hsl(240, 4%, 14%)" : "hsl(240, 5%, 96%)",
     borderColor: border,
     horizontalBorderColor: border,
     headerBottomBorderColor: border,

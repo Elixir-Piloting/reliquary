@@ -81,10 +81,13 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   }, [columnsMeta, columns]);
 
   const gridColumns = useMemo<GridColumn[]>(
-    () => visibleCols.map(c => ({
+    () => visibleCols.map((c, i) => ({
       title: c.name,
       id: c.name,
       width: colWidths[c.name] ?? Math.max(160, Math.min(c.name.length * 10 + 70, 300)),
+      // Let only the last column grow so the grid spans full width without
+      // over-stretching every column.
+      ...(i === visibleCols.length - 1 ? { grow: 1 } : {}),
     })),
     [visibleCols, colWidths]
   );
@@ -97,10 +100,10 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   const getCellContent = useCallback(
     (cell: Item): GridCell => {
       const col = visibleCols[cell[0]];
-      if (!col) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: true };
+      if (!col) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: false, readonly: true };
       const row = rows[cell[1]];
-      // Empty fill rows (no data) render as empty cells.
-      if (!row) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: true };
+      // Empty fill rows (beyond data) render as inert, read-only empty cells.
+      if (!row) return { kind: GridCellKind.Text, displayData: "", data: "", allowOverlay: false, readonly: true };
       const meta = metaByCol.get(col.name);
       const value = row[col.name];
       return toGridCell(value, meta?.dataType || col.dataType, { readonly: !canEdit });
@@ -208,8 +211,10 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           rangeSelect="rect"
           rowSelect="multi"
           columnSelect="none"
-          rowMarkers={{ kind: canEdit ? "checkbox-visible" : "number", width: 40 }}
+          rowMarkers="none"
           freezeColumns={1}
+          smoothScrollX
+          smoothScrollY
           rowHeight={34}
           headerHeight={34}
           minColumnWidth={100}
