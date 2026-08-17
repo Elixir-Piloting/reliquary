@@ -44,6 +44,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
   const ref = useRef<DataEditorRef>(null);
   const dark = isDarkMode();
   const [pendingDelete, setPendingDelete] = useState<GridSelection | null>(null);
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
 
   const visibleCols = useMemo(
     () => columns.filter(c => !hiddenColumns || !hiddenColumns.has(c.name)),
@@ -61,10 +62,15 @@ export function GlideDataGrid(props: GlideDataGridProps) {
     () => visibleCols.map(c => ({
       title: c.name,
       id: c.name,
-      width: Math.max(150, Math.min(c.name.length * 9 + 60, 280)),
+      width: colWidths[c.name] ?? Math.max(160, Math.min(c.name.length * 10 + 70, 300)),
     })),
-    [visibleCols]
+    [visibleCols, colWidths]
   );
+
+  // Persist freeform column resizing.
+  const onColumnResize = useCallback((_col: GridColumn, newSize: number, _colIndex: number, _withGrow: number) => {
+    setColWidths(prev => ({ ...prev, [_col.id ?? String(_colIndex)]: newSize }));
+  }, []);
 
   const getCellContent = useCallback(
     (cell: Item): GridCell => {
@@ -174,6 +180,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           onCellsEdited={onCellsEdited}
           onCellClicked={openRow}
           onDelete={handleDeleteRequest}
+          onColumnResize={onColumnResize}
           rangeSelect="rect"
           rowSelect="multi"
           columnSelect="none"
