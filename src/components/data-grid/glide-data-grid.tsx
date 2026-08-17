@@ -7,7 +7,6 @@ import {
   type DataEditorRef,
   type GridCell,
   type Item,
-  type EditableGridCell,
   type EditListItem,
   type GridSelection,
 } from "@glideapps/glide-data-grid";
@@ -29,28 +28,34 @@ interface GlideDataGridProps {
   canEdit?: boolean;
   onStagedChange: (change: PendingChange) => void;
   onRequestDelete: (changes: PendingChange[]) => void;
-  onOpenRow: (row: Record<string, unknown>) => void;
   stagedPkKeys: Set<string>; // PK keys whose rows have staged changes
   enumValues?: Record<string, string[] | null>;
   hiddenColumns?: Set<string>;
 }
 
+/**
+ * Canvas data grid (Glide). Interaction model:
+ * - click / drag selects cells (range select); double-click or Enter edits.
+ * - the first column is frozen/anchored so it stays visible while scrolling.
+ * - column headers drag to resize; double-clicking a header auto-fits (Glide).
+ * - row deletion only happens when the user explicitly presses Delete over a
+ *   selection, which opens the confirm dialog (never on a mere selection change).
+ */
 export function GlideDataGrid(props: GlideDataGridProps) {
   const {
-    rows, columns, schema, table, connectionId, pkColumns = [], columnsMeta = [],
-    canEdit, onStagedChange, onRequestDelete, onOpenRow, stagedPkKeys,
+    rows, columns, schema, table, pkColumns = [], columnsMeta = [],
+    canEdit, onStagedChange, onRequestDelete, stagedPkKeys,
     enumValues = {}, hiddenColumns,
   } = props;
   const ref = useRef<DataEditorRef>(null);
   const dark = isDarkMode();
-  const [deleteSel, setDeleteSel] = useState<GridSelection | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<GridSelection | null>(null);
 
   const visibleCols = useMemo(
     () => columns.filter(c => !hiddenColumns || !hiddenColumns.has(c.name)),
     [columns, hiddenColumns]
   );
 
-  // Build a map columnName -> meta for edit typing.
   const metaByCol = useMemo(() => {
     const m = new Map<string, { columnName: string; dataType: string; isIdentity?: boolean }>();
     for (const cm of columnsMeta) m.set(cm.columnName, cm);
@@ -103,32 +108,22 @@ export function GlideDataGrid(props: GlideDataGridProps) {
     [canEdit, schema, table, visibleCols, rows, metaByCol, pkColumns, onStagedChange]
   );
 
-  // Row selection -> delete flow (confirmation dialog)
-  const onGridSelectionChange = useCallback((sel: GridSelection) => {
-    setDeleteSel(sel);
-  }, []);
+  // Deletion is triggered ONLY by the user pressing Delete over a selection.
+  // Store the selection and show the confirm dialog; never fire on selection change.
+  const handleDeleteRequest = useCallback((sel: GridSelection) => {
+    if (!canEdit || !schema || !table) return true;
+    if (sel.rows.length > 0) setPendingDelete(sel);
+    return true;
+  }, [canEdit, schema, table]);
 
-  // Single-click a data cell -> open the row in the inspector. Editing still
-  // happens via Glide's built-in editor on double-click/Enter.
-  const openRow = useCallback(
-    (cell: Item) => {
-      const [cIdx, rIdx] = cell;
-      if (cIdx < 0 || rIdx < 0) return;
-      if (cIdx >= visibleCols.length) return;
-      const row = rows[rIdx];
-      if (row) onOpenRow(row);
-    },
-    [rows, onOpenRow, visibleCols.length]
-  );
-
-  // Delete handler: gather selected rows, build DELETE changes, confirm.
   const confirmDelete = useCallback(() => {
-    if (!deleteSel || !canEdit || !schema || !table) return;
+    if (!pendingDelete || !canEdit || !schema || !table) return;
     const changes: PendingChange[] = [];
-    for (const r of deleteSel.rows.toArray()) {
+    for (const r of pendingDelete.rows.toArray()) {
       const row = rows[r];
       if (!row) continue;
-      const pkEntries = Object.entries(getPk(row, pkColumns));
+      const pkValues = getPk(row, pkColumns);
+      const pkEntries = Object.entries(pkValues);
       if (pkEntries.length === 0) continue;
       const whereClause = pkEntries.map(([k], i) => `"${k}" = $${i + 1}`).join(" AND ");
       changes.push({
@@ -138,7 +133,7 @@ export function GlideDataGrid(props: GlideDataGridProps) {
         op: "delete",
         columnName: "",
         dataType: "",
-        pkValues: getPk(row, pkColumns),
+        pkValues,
         originalValue: null,
         newValue: null,
         statement: {
@@ -147,8 +142,9 @@ export function GlideDataGrid(props: GlideDataGridProps) {
         },
       });
     }
+    setPendingDelete(null);
     if (changes.length > 0) onRequestDelete(changes);
-  }, [deleteSel, canEdit, schema, table, rows, pkColumns, onRequestDelete]);
+  }, [pendingDelete, canEdit, schema, table, rows, pkColumns, onRequestDelete]);
 
   return (
     <div className="flex h-full flex-col">
@@ -160,22 +156,23 @@ export function GlideDataGrid(props: GlideDataGridProps) {
           rows={rows.length}
           getCellContent={getCellContent}
           onCellsEdited={onCellsEdited}
-          onGridSelectionChange={onGridSelectionChange}
-          onCellClicked={openRow}
-          rowMarkers={{ kind: canEdit ? "checkbox-visible" : "number", width: 40 }}
+          onDelete={handleDeleteRequest}
+          rangeSelect="rect"
+          rowSelect="none"
+          columnSelect="none"
+          rowMarkers="none"
+          freezeColumns={1}
           rowHeight={30}
           headerHeight={32}
           minColumnWidth={100}
           maxColumnWidth={600}
-          freezeColumns={0}
-          onDelete={(sel) => { setDeleteSel(sel); return true; }}
         />
       </div>
       <ConfirmDialog
-        open={!!deleteSel && deleteSel.rows.length > 0}
-        onOpenChange={open => { if (!open) setDeleteSel(null); }}
-        title={`Delete ${deleteSel?.rows.length ?? 0} Row${(deleteSel?.rows.length ?? 0) !== 1 ? "s" : ""}`}
-        description={`This will DELETE ${deleteSel?.rows.length ?? 0} row${(deleteSel?.rows.length ?? 0) !== 1 ? "s" : ""} from ${schema}.${table}. Deletion is staged with your other changes and committed atomically via Apply.`}
+        open={!!pendingDelete}
+        onOpenChange={open => { if (!open) setPendingDelete(null); }}
+        title={`Delete ${pendingDelete?.rows.length ?? 0} Row${(pendingDelete?.rows.length ?? 0) !== 1 ? "s" : ""}`}
+        description={`This will DELETE ${pendingDelete?.rows.length ?? 0} row${(pendingDelete?.rows.length ?? 0) !== 1 ? "s" : ""} from ${schema}.${table}. Deletion is staged with your other changes and committed atomically via Apply.`}
         confirmLabel="Stage Delete"
         destructive
         onConfirm={confirmDelete}
