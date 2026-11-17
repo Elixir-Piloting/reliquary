@@ -11,7 +11,13 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const SSL_MODES = ["disable", "prefer", "require", "verify-full"] as const;
+const SSL_MODES = ["disable", "prefer", "require", "verify-ca", "verify-full"] as const;
+
+function sslModeLabel(mode: string): string {
+  if (mode === "verify-ca") return "Verify CA";
+  if (mode === "verify-full") return "Verify Full";
+  return mode[0].toUpperCase() + mode.slice(1);
+}
 
 export default function AddConnectionFormPage() {
   const { provider } = useParams<{ provider: string }>();
@@ -195,7 +201,7 @@ export default function AddConnectionFormPage() {
                   <SelectTrigger id="sslmode"><SelectValue placeholder="Prefer" /></SelectTrigger>
                   <SelectContent>
                     {SSL_MODES.map(mode => (
-                      <SelectItem key={mode} value={mode}>{mode === "verify-full" ? "Verify Full" : mode[0].toUpperCase() + mode.slice(1)}</SelectItem>
+                      <SelectItem key={mode} value={mode}>{sslModeLabel(mode)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Eye, Layers, Loader2, Plus, RefreshCw, ShieldAlert, ChevronRight, ChevronDown, MoreVertical, FileCode2, ClipboardCopy, Pencil, CopyPlus, Download, Eraser, Trash2 } from "lucide-react";
 import { Table as PhosphorTable } from "@phosphor-icons/react";
@@ -26,6 +26,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { Table } from "./types";
 import type { ColumnInfo } from "@/lib/ipc-client";
+import { Persistence } from "@/lib/persistence";
 
 interface TableListProps {
   tables: Table[];
@@ -79,7 +80,12 @@ function toSqlInserts(schema: string, table: string, columns: { name: string; da
 
 export function TableList({ tables, isLoading, tableSearchTerm, connectionId, onRefresh, onTableSelect, onOpenNewTableTab, selectedSchema }: TableListProps) {
   const navigate = useNavigate();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    if (!connectionId) return {};
+    const saved: Record<string, boolean> = {};
+    for (const key of Persistence.getExpandedTables(connectionId)) saved[key] = true;
+    return saved;
+  });
   const [columns, setColumns] = useState<Record<string, ColumnInfo[]>>({});
   const [columnsLoading, setColumnsLoading] = useState<Record<string, boolean>>({});
   const [menuTable, setMenuTable] = useState<Table | null>(null);
@@ -87,6 +93,7 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
   const [duplicateName, setDuplicateName] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmAction, setConfirmAction] = useState<null | { kind: "empty" | "delete"; table: Table }>(null);
+  const [exportOversize, setExportOversize] = useState<null | { format: "csv" | "json" | "sql"; schema: string; table: string; total: number }>(null);
 
   const filteredTables = tableSearchTerm?.trim()
     ? tables.filter(t => t.name.toLowerCase().includes(tableSearchTerm.toLowerCase()))
@@ -108,6 +115,12 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
       }
     }
   }, [expanded, columns, columnsLoading, connectionId]);
+
+  // Persist expanded tables per connection so they survive refreshes and launches.
+  useEffect(() => {
+    if (!connectionId) return;
+    Persistence.setExpandedTables(connectionId, Object.keys(expanded).filter(k => expanded[k]));
+  }, [connectionId, expanded]);
 
   const openInEditor = (table: Table) => {
     if (!connectionId) return;
@@ -151,32 +164,53 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
     setBusy(false);
   };
 
-  const exportData = async (format: "csv" | "json" | "sql") => {
-    if (!menuTable || !connectionId) return;
+  const EXPORT_CAP = 100000;
+
+  /** Fetch → serialize → save. Shared by the normal and oversize-confirmed paths. */
+  const exportData = async (format: "csv" | "json" | "sql", table: { schema: string; name: string } = menuTable!) => {
+    if (!table || !connectionId) return;
     setBusy(true);
     try {
-      // Fetch all rows (bounded at 100k).
-      const data = await invoke<any>("get_table_data", { connectionId, schema: menuTable.schema, table: menuTable.name, page: 1, pageSize: 100000 });
-      const result = { columns: (data.columns || []) as { name: string; dataType: string }[], rows: (data.rows || []) as Record<string, unknown>[] };
-      const base = `${menuTable.schema}.${menuTable.name}`;
+      // Fetch all rows (bounded at the cap below).
+      const data = await invoke<any>("get_table_data", { connectionId, schema: table.schema, table: table.name, page: 1, pageSize: EXPORT_CAP });
+      const columns = (data.columns || []) as { name: string; dataType: string }[];
+      const rows = (data.rows || []) as Record<string, unknown>[];
+      const total = typeof data.totalCount === "number" ? data.totalCount : rows.length;
+
+      // Over the cap: don't silently produce a truncated file — ask first.
+      if (total > EXPORT_CAP) {
+        setExportOversize({ format, schema: table.schema, table: table.name, total });
+        return;
+      }
+
+      const base = `${table.schema}.${table.name}`;
       let content: string;
       let ext: string;
-      if (format === "csv") { content = toCsv(result); ext = "csv"; }
-      else if (format === "json") { content = toJson(result); ext = "json"; }
-      else { content = toSqlInserts(menuTable.schema, menuTable.name, result.columns, result.rows); ext = "sql"; }
+      if (format === "csv") { content = toCsv({ columns, rows }); ext = "csv"; }
+      else if (format === "json") { content = toJson({ columns, rows }); ext = "json"; }
+      else { content = toSqlInserts(table.schema, table.name, columns, rows); ext = "sql"; }
 
       // Ask the user where to save, defaulting to the table name.
       const filePath = await save({
         defaultPath: `${base}.${ext}`,
         filters: [{ name: format.toUpperCase(), extensions: [ext] }],
       });
-      if (!filePath) { setBusy(false); return; } // cancelled
+      if (!filePath) return; // cancelled
       await writeTextFile(filePath, content);
-      toast.success(`Exported ${result.rows.length} rows as ${format.toUpperCase()}`);
+      toast.success(`Exported ${rows.length} rows as ${format.toUpperCase()}`);
     } catch (e) {
       toast.error("Export failed", { description: String(e) });
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
+  };
+
+  /** User confirmed an over-cap export: re-run (cap still applies, but explicitly). */
+  const confirmOversizeExport = async () => {
+    if (!exportOversize || !connectionId) return;
+    const { format, schema, table } = exportOversize;
+    setExportOversize(null);
+    await exportData(format, { schema, name: table });
   };
 
   const runConfirmAction = async () => {
@@ -218,9 +252,9 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
         <menu.SubTrigger><Download className="h-4 w-4 mr-2" />Export data</menu.SubTrigger>
         <menu.Portal>
           <menu.SubContent>
-            <menu.Item onClick={() => { setMenuTable(table); exportData("csv"); }}>CSV</menu.Item>
-            <menu.Item onClick={() => { setMenuTable(table); exportData("json"); }}>JSON</menu.Item>
-            <menu.Item onClick={() => { setMenuTable(table); exportData("sql"); }}>SQL</menu.Item>
+            <menu.Item onClick={() => { setMenuTable(table); exportData("csv", table); }}>CSV</menu.Item>
+            <menu.Item onClick={() => { setMenuTable(table); exportData("json", table); }}>JSON</menu.Item>
+            <menu.Item onClick={() => { setMenuTable(table); exportData("sql", table); }}>SQL</menu.Item>
           </menu.SubContent>
         </menu.Portal>
       </menu.Sub>
@@ -395,6 +429,23 @@ export function TableList({ tables, isLoading, tableSearchTerm, connectionId, on
         loading={busy}
         onConfirm={runConfirmAction}
       />
+
+      {exportOversize && (
+        <Dialog open onOpenChange={open => { if (!open) setExportOversize(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><Download className="h-5 w-5 text-amber-500" />Large export</DialogTitle>
+              <DialogDescription>
+                "{exportOversize.schema}.{exportOversize.table}" has {exportOversize.total.toLocaleString()} rows. Export is capped at {EXPORT_CAP.toLocaleString()}, so this file will be <span className="font-medium">incomplete</span> — only the first {EXPORT_CAP.toLocaleString()} rows will be saved. Continue?
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setExportOversize(null)} disabled={busy}>Cancel</Button>
+              <Button onClick={confirmOversizeExport} disabled={busy}>Export first {EXPORT_CAP.toLocaleString()}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

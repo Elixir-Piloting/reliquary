@@ -92,6 +92,35 @@ fn password_containing_multiple_at_signs_is_preserved() {
 }
 
 #[test]
+fn empty_password_at_marker_does_not_leak_into_username() {
+    // Pooler connection strings arrive as "user@@host" (an empty-password
+    // marker with the ":" dropped). The trailing @ is a separator, not part of
+    // the role name — a bad role here turns a password problem into an opaque
+    // "role does not exist" auth failure.
+    let parts = parse_pg_url(&url("neondb_owner@@ep-pooler.example.com/neondb?sslmode=require")).unwrap();
+    assert_eq!(parts.user, "neondb_owner");
+    assert_eq!(parts.password, "");
+    assert_eq!(parts.host, "ep-pooler.example.com");
+}
+
+#[test]
+fn colon_empty_password_form_is_supported() {
+    let parts = parse_pg_url(&url("user:@host:5432/db")).unwrap();
+    assert_eq!(parts.user, "user");
+    assert_eq!(parts.password, "");
+}
+
+#[test]
+fn connstr_for_pooler_double_at_url_parses_in_tokio_config() {
+    let connstr = parse_pg_connstr(&url("neondb_owner@@ep-pooler.example.com/neondb?sslmode=require")).unwrap();
+    assert!(connstr.contains("user=neondb_owner"), "got: {connstr}");
+    assert!(!connstr.contains("neondb_owner@ "), "user must not carry a trailing @: {connstr}");
+    connstr
+        .parse::<tokio_postgres::Config>()
+        .unwrap_or_else(|e| panic!("stored pooler URL rejected by tokio-postgres Config: {} (connstr: {})", e, connstr));
+}
+
+#[test]
 fn bracket_ipv6_host_is_handled() {
     let parts = parse_pg_url(&url("user:pass@[::1]:5432/db")).unwrap();
     assert_eq!(parts.host, "[::1]");
@@ -242,5 +271,4 @@ fn stored_connection_deserializes_old_config_without_new_fields() {
     assert_eq!(conn.provider.as_deref(), Some("neon"));
     assert_eq!(conn.sslmode, None);
     assert_eq!(conn.read_only, None);
-    assert_eq!(conn.neon_api_key, None);
 }

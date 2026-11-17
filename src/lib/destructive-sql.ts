@@ -15,6 +15,10 @@ export const DESTRUCTIVE_KEYWORDS = [
   "revoke",
   "vacuum",
   "reindex",
+  // Matches the backend: DO / CALL can execute arbitrary writes, so they belong
+  // in the same destructive bucket for the Safe-Mode confirmation dialog.
+  "do",
+  "call",
 ] as const;
 
 const COMMENT_STRIPPERS: Array<{ regex: RegExp }> = [

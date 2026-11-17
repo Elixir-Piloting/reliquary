@@ -5,6 +5,7 @@ import { SchemaSelector } from "./SchemaSelector";
 import { TableSearch } from "./TableSearch";
 import { TableList } from "./TableList";
 import { onBranchSwitched, onSchemaChanged } from "@/lib/branch-events";
+import { Persistence } from "@/lib/persistence";
 import type { Table } from "./types";
 import type { SchemaInfo } from "@/lib/db/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -28,7 +29,9 @@ function SchemaExplorerLoadingState() {
 
 export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab }: SchemaExplorerProps) {
   const [tableSearchTerm, setTableSearchTerm] = useState("");
-  const [selectedSchema, setSelectedSchema] = useState<string | null>(null);
+  const [selectedSchema, setSelectedSchema] = useState<string | null>(() =>
+    connectionId ? Persistence.getSelectedSchema(connectionId) : null
+  );
   const [schemas, setSchemas] = useState<string[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [schemasLoading, setSchemasLoading] = useState(false);
@@ -41,11 +44,18 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
       const result = await invoke<SchemaInfo[]>("get_schemas", { connectionId });
       const names = result.map(s => s.schemaName);
       setSchemas(names);
-      if (names.length > 0 && (!selectedSchema || !names.includes(selectedSchema))) setSelectedSchema(names[0]);
-      else if (names.length === 0) setSelectedSchema(null);
+      if (names.length > 0) {
+        // Prefer the persisted schema; fall back to the first available one.
+        const persisted = Persistence.getSelectedSchema(connectionId);
+        const target = persisted && names.includes(persisted) ? persisted : names[0];
+        setSelectedSchema(prev => prev ?? target);
+        if (persisted && !names.includes(persisted)) Persistence.setSelectedSchema(connectionId, null);
+      } else {
+        setSelectedSchema(null);
+      }
     } catch (e) { console.error("Failed to load schemas", e); setSchemas([]); setSelectedSchema(null); }
     setSchemasLoading(false);
-  }, [connectionId, selectedSchema]);
+  }, [connectionId]);
 
   const loadTables = useCallback(async () => {
     if (!connectionId || !selectedSchema) return;
@@ -71,6 +81,11 @@ export function SchemaExplorer({ connectionId, onTableSelect, onOpenNewTableTab 
   useEffect(() => {
     return onSchemaChanged(loadTables);
   }, [loadTables]);
+
+  // Persist the selected schema so it survives launches, reconnects and refreshes.
+  useEffect(() => {
+    if (connectionId) Persistence.setSelectedSchema(connectionId, selectedSchema);
+  }, [connectionId, selectedSchema]);
 
   if (!connectionId) return <div className="p-4 text-sm text-muted-foreground">Connect to a database to view schemas</div>;
   if (schemasLoading && schemas.length === 0) return <SchemaExplorerLoadingState />;

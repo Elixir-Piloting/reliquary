@@ -7,6 +7,7 @@ import { TABLE_HEADER_HEIGHT, COLUMN_HEIGHT, TABLE_MIN_WIDTH, TABLE_PADDING } fr
 import type { SchemaInfo, ColumnInfo as RustColumnInfo, RelationshipInfo } from "@/lib/db/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LockToggle } from "./lock-toggle";
+import { Persistence } from "@/lib/persistence";
 
 function isDarkMode() {
   if (typeof window === "undefined") return false;
@@ -75,10 +76,10 @@ function autoLayout(tables: TableNode[], relationships: RelationshipEdge[]) {
   return positions;
 }
 
-export default function SchemaVisualizer({ connectionId }: { connectionId: string }) {
+export default function SchemaVisualizer({ connectionId, initialSchema }: { connectionId: string; initialSchema?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [schemas, setSchemas] = useState<string[]>([]);
-  const [currentSchema, setCurrentSchema] = useState<string>("public");
+  const [currentSchema, setCurrentSchema] = useState<string>(initialSchema || "public");
   const [tables, setTables] = useState<TableNode[]>([]);
   const [relationships, setRelationships] = useState<RelationshipEdge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,9 +103,21 @@ export default function SchemaVisualizer({ connectionId }: { connectionId: strin
     invoke<SchemaInfo[]>("get_schemas", { connectionId }).then(r => {
       const names = r.map(s => s.schemaName);
       setSchemas(names);
-      if (names.length > 0) setCurrentSchema(names[0]);
+      if (names.length > 0) {
+        // Prefer the active table's schema, then the last-selected schema, then
+        // the first available schema, so the visualizer opens on the schema the
+        // user is actually working in.
+        const persisted = Persistence.getSelectedSchema(connectionId);
+        const target = (initialSchema && names.includes(initialSchema)) ? initialSchema
+          : (persisted && names.includes(persisted)) ? persisted
+          : names[0];
+        setCurrentSchema(prev => {
+          if (names.includes(prev)) return prev;
+          return target;
+        });
+      }
     }).catch(console.error);
-  }, [connectionId]);
+  }, [connectionId, initialSchema]);
 
   const loadSchema = useCallback(async () => {
     if (!connectionId || !currentSchema) return;

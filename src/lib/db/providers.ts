@@ -28,6 +28,40 @@ export const POSTGRESQL_PROVIDER: ProviderMetadata = {
   urlProtocol: "postgresql://",
 };
 
-export function getProviderMetadata(_provider?: string): ProviderMetadata {
-  return POSTGRESQL_PROVIDER;
+export const NEON_PROVIDER: ProviderMetadata = {
+  id: "neon",
+  name: "Neon",
+  icon: "/icons/neon.png",
+  iconType: "image",
+  defaultPort: 5432,
+  color: "#00E599",
+  description: "Serverless Postgres on Neon",
+  connectionType: "url",
+  requiredFields: ["host", "database", "user"],
+  urlPlaceholder: "postgresql://user:password@host:port/database",
+  urlProtocol: "postgresql://",
+};
+
+export const SUPABASE_PROVIDER: ProviderMetadata = {
+  id: "supabase",
+  name: "Supabase",
+  icon: "/icons/supabase.png",
+  iconType: "image",
+  defaultPort: 5432,
+  color: "#3ECF8E",
+  description: "Postgres hosted on Supabase",
+  connectionType: "url",
+  requiredFields: ["host", "database", "user"],
+  urlPlaceholder: "postgresql://user:password@host:port/database",
+  urlProtocol: "postgresql://",
+};
+
+const PROVIDERS: Record<string, ProviderMetadata> = {
+  postgresql: POSTGRESQL_PROVIDER,
+  neon: NEON_PROVIDER,
+  supabase: SUPABASE_PROVIDER,
+};
+
+export function getProviderMetadata(provider?: string): ProviderMetadata {
+  return PROVIDERS[provider || "postgresql"] ?? POSTGRESQL_PROVIDER;
 }

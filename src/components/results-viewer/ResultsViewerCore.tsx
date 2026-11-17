@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult, ResultsViewerProps, PendingChange } from "./types";
+
 import { ReviewChangesPanel } from "./review-changes-panel";
 import { BorderBeam } from "@/components/ui/border-beam";
 import { RowEditorPanel } from "./row-editor-panel";
@@ -21,11 +22,7 @@ import { useRightSidebar } from "@/components/right-sidebar-context";
 import { getInputType, formatValueForInput, toSqlParamValue, displayValueToString } from "./field-types";
 import { toCsv, toJson, downloadText } from "@/lib/export";
 import API, { type RowMutationStatement } from "@/lib/ipc-client";
-import { GlideDataGrid } from "@/components/data-grid/glide-data-grid";
 import { buildDeleteChange, buildInsertChange } from "@/components/data-grid/editing";
-
-// Feature flag: use the Glide canvas grid instead of the shadcn Table grid.
-const USE_GLIDE_GRID = true;
 
 function getSortOptions(dataType: string): { label: string; direction: 'asc' | 'desc' }[] {
   const dt = dataType?.toLowerCase() || '';
@@ -158,6 +155,34 @@ export function ResultsViewer({
   const [applying, setApplying] = useState(false);
   const [localRows, setLocalRows] = useState<Record<string, unknown>[] | null>(null);
   const rightSidebar = useRightSidebar();
+
+  // Column widths keyed by column name, persisted per schema.table so resizing
+  // survives re-running the same query and switching tabs.
+  const widthStorageKey = schema && table ? `colWidths:${schema}.${table}` : null;
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    if (!widthStorageKey) return {};
+    try {
+      return JSON.parse(localStorage.getItem(widthStorageKey) || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const updateColumnWidth = (col: string, width: number) => {
+    const clamped = Math.max(80, Math.min(800, width));
+    setColumnWidths(prev => {
+      const next = { ...prev, [col]: clamped };
+      if (widthStorageKey) {
+        try { localStorage.setItem(widthStorageKey, JSON.stringify(next)); } catch { /* ignore */ }
+      }
+      return next;
+    });
+  };
+
+  // Column currently being resized, used to render the full-height drag line
+  // and to keep the cursor pinned to col-resize for the whole gesture.
+  const [resizingCol, setResizingCol] = useState<string | null>(null);
+  const [resizeLeft, setResizeLeft] = useState<number | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   const canMutate = enableCRUD && !readOnly && schema && table && connectionId;
   const canEdit = canMutate && pkColumns && pkColumns.length > 0;
@@ -387,58 +412,6 @@ export function ResultsViewer({
     toast.info(`${changes.length} change${changes.length !== 1 ? 's' : ''} staged — review & apply to commit`);
   };
 
-  // Single-change variant used by the Glide grid's inline edits / inserts.
-  const handleStagedChange = (change: PendingChange) => {
-    setPendingChanges(prev => {
-      if (change.op === "update" && change.pkValues && Object.keys(change.pkValues).length > 0) {
-        // Replace any existing staged edit for the same row + column so repeated
-        // edits (e.g. toggling a boolean) don't pile up duplicate changes.
-        const key = `${JSON.stringify(change.pkValues)}:${change.columnName}`;
-        const idx = prev.findIndex(c => c.op === "update" && `${JSON.stringify(c.pkValues)}:${c.columnName}` === key);
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = change;
-          return next;
-        }
-      }
-      return [...prev, change];
-    });
-    const verb = change.op === "update" ? "Edit" : change.op === "insert" ? "Insert" : "Delete";
-    toast.info(`${verb} staged — review & apply to commit`);
-  };
-
-  const stagedPkKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const c of pendingChanges) {
-      if (c.op === "update" || c.op === "delete") keys.add(JSON.stringify(c.pkValues));
-    }
-    return keys;
-  }, [pendingChanges]);
-
-  // Per-row staged updates so the grid overlays them (row index -> col -> value).
-  const stagedByRow = useMemo(() => {
-    const map = new Map<number, Record<string, string>>();
-    for (let i = 0; i < (sortedRows?.length ?? 0); i++) {
-      const row = sortedRows[i];
-      for (const c of pendingChanges) {
-        if (c.op !== "update" || !c.columnName) continue;
-        if (Object.entries(c.pkValues).every(([k, v]) => row?.[k] === v)) {
-          const cur = map.get(i) ?? {};
-          cur[c.columnName] = String(c.newValue ?? "");
-          map.set(i, cur);
-        }
-      }
-    }
-    return map;
-  }, [pendingChanges, sortedRows]);
-
-  const handleGridDelete = (changes: PendingChange[]) => {
-    setPendingChanges(prev => [...prev, ...changes]);
-    setSelectedRows(new Set());
-    setDeleteDialogOpen(false);
-    toast.info(`Staged ${changes.length} delete${changes.length !== 1 ? 's' : ''} — review & apply to commit`);
-  };
-
   const handleUnstage = (id: string) => setPendingChanges(prev => prev.filter(c => c.id !== id));
 
   const handleInsertSubmit = (statement: RowMutationStatement, values: Record<string, unknown>) => {
@@ -562,6 +535,9 @@ export function ResultsViewer({
 
   const paginatedRows = sortedRows;
   const hasRows = paginatedRows.length > 0 || insertRows.length > 0;
+  // Render the column headers (and the table) as long as there is at least one
+  // column to show, even when the table has no rows yet.
+  const hasColumns = visibleColumns.length > 0;
 
   const toggleAllSelect = (checked: boolean) => {
     if (checked) setSelectedRows(new Set(paginatedRows.map((_, i) => i)));
@@ -628,35 +604,17 @@ export function ResultsViewer({
             <TableBody />
           </Table>
         </div>
-      ) : USE_GLIDE_GRID && hasRows ? (
-        <div className="h-full w-full overflow-hidden">
-          <GlideDataGrid
-            rows={paginatedRows}
-            columns={displayResult?.columns || []}
-            schema={schema}
-            table={table}
-            connectionId={connectionId}
-            pkColumns={pkColumns || []}
-            columnsMeta={columnsMeta}
-            canEdit={!!canEdit}
-            onStagedChange={handleStagedChange}
-            onRequestDelete={handleGridDelete}
-            onOpenRow={handleRowClick}
-            stagedPkKeys={stagedPkKeys}
-            stagedByRow={stagedByRow}
-            enumValues={enumCache}
-            hiddenColumns={hiddenColumns}
-          />
-        </div>
-      ) : hasRows ? (
+      ) : hasColumns ? (
         <>
-          <div className="flex-1 overflow-auto">
+          <div ref={tableScrollRef} className="relative flex-1 overflow-auto">
             <Table className="min-w-max">
                 <TableHeader className="sticky top-0 bg-table-header z-50 shadow-[0_1px_0_0_hsl(var(--border))]">
                 <TableRow className="hover:bg-muted/50">
                   <TableHead className="sticky left-0 z-30 bg-table-header pl-8 pr-8 shadow-[inset_-1px_0_0_hsl(var(--border))]" style={{ width: 'var(--checkbox-w)' }}><Checkbox checked={selectedRows.size === paginatedRows.length && paginatedRows.length > 0} onCheckedChange={toggleAllSelect} /></TableHead>
-                  {(visibleColumns).map((field, colIdx) => (
-                    <TableHead key={field.name} className={cn("group select-none min-w-[140px] shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none", field.name === 'id' && "sticky z-30 bg-table-header")} style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}>
+                  {(visibleColumns).map((field, colIdx) => {
+                    const colWidth = columnWidths[field.name];
+                    return (
+                    <TableHead key={field.name} className={cn("group relative select-none shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none", field.name === 'id' && "sticky z-30 bg-table-header", !colWidth && "min-w-[140px]")} style={{ ...(field.name === 'id' ? { left: 'var(--checkbox-w)' } : {}), ...(colWidth ? { width: colWidth } : {}) }}>
                       <ContextMenu>
                         <ContextMenuTrigger asChild>
                           <div className="flex items-center justify-between w-full cursor-pointer" onClick={() => handleSort(field.name)}>
@@ -694,8 +652,50 @@ export function ResultsViewer({
                           {effectiveSortColumn === field.name && <><div className="border-t border-border mx-1 my-0.5" /><ContextMenuItem onSelect={() => { if (onSortChange) { onSortChange(field.name); } else { setSortColumn(null); } }}><X className="h-3 w-3 mr-2" />Clear sort</ContextMenuItem></>}
                         </ContextMenuContent>
                       </ContextMenu>
+                      <div
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setResizingCol(field.name);
+                          const th = e.currentTarget.closest('th') as HTMLElement;
+                          const container = tableScrollRef.current;
+                          const startX = e.clientX;
+                          const startWidth = colWidth || th?.getBoundingClientRect().width || 140;
+                          const onMove = (ev: MouseEvent) => {
+                            updateColumnWidth(field.name, startWidth + ev.clientX - startX);
+                            // Position the indicator relative to the scroll container so
+                            // it stays glued to the column boundary even while scrolled.
+                            if (th && container) {
+                              const cr = container.getBoundingClientRect();
+                              const tr = th.getBoundingClientRect();
+                              setResizeLeft(tr.right - cr.left + container.scrollLeft);
+                            }
+                          };
+                          const onUp = () => {
+                            setResizingCol(null);
+                            setResizeLeft(null);
+                            window.removeEventListener('mousemove', onMove);
+                            window.removeEventListener('mouseup', onUp);
+                            document.body.style.cursor = '';
+                            document.body.style.userSelect = '';
+                          };
+                          window.addEventListener('mousemove', onMove);
+                          window.addEventListener('mouseup', onUp);
+                          document.body.style.cursor = 'col-resize';
+                          document.body.style.userSelect = 'none';
+                        }}
+                        onDoubleClick={(e) => { e.stopPropagation(); updateColumnWidth(field.name, 140); }}
+                        className="absolute top-0 -right-1.5 z-40 h-full w-4 cursor-col-resize touch-none select-none"
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={`Resize column ${field.name}`}
+                        title="Drag to resize, double-click to reset"
+                      >
+                        <span className={cn("absolute top-0 left-1/2 -translate-x-1/2 h-full w-px transition-colors",
+                          resizingCol === field.name ? "bg-primary" : "bg-transparent group-hover:bg-foreground/40")} />
+                      </div>
                     </TableHead>
-                  ))}
+                  );})}
                   {canEdit && onAddColumn && (
                     <TableHead className="min-w-[140px] text-left shadow-[inset_-1px_0_0_hsl(var(--border))] last:shadow-none">
                       <button onClick={onAddColumn} title="Add new column (open editor)" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
@@ -724,10 +724,10 @@ export function ResultsViewer({
                         const inputType = getInputType(field.dataType);
                         const enumVals = inputType === 'maybe-enum' ? enumCache[field.dataType] : null;
                         return (<TableCell key={field.name}
-                          className={cn("min-w-[140px] max-w-[300px] truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
-                          style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
+                          className={cn("truncate cursor-pointer relative border-r border-border last:border-r-0 hover:bg-muted/50", field.name === 'id' && "sticky z-20 bg-background", !columnWidths[field.name] && "min-w-[140px] max-w-[300px]", columnWidths[field.name] && "max-w-none", showNull && "text-muted-foreground italic", change && "bg-amber-500/15 ring-1 ring-amber-500", isEditing && "bg-blue-500/10 ring-1 ring-blue-500", isSelectedCell && !isEditing && !change && "bg-blue-500/10 ring-1 ring-blue-500", pendingDelete && "line-through")}
+                          style={{ ...(field.name === 'id' ? { left: 'var(--checkbox-w)' } : {}), ...(columnWidths[field.name] ? { width: columnWidths[field.name] } : {}) }}
                           onDoubleClick={(e) => { e.stopPropagation(); if (!pendingDelete) handleCellDoubleClick(actualIndex, field.name, field.dataType, value); }}
-                          onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); if (!pendingDelete) handleRowClick(row); }} title={showNull ? "NULL" : displayValueToString(displayValue)}>
+                          onClick={(e) => { e.stopPropagation(); setSelectedCell({ rowIdx: actualIndex, col: field.name }); if (!pendingDelete) handleRowClick(row); }} title={showNull ? "NULL" : displayValueToString(displayValue, field.dataType)}>
                           {isEditing ? (inputType === 'select-boolean' ? (
                             <InlineSelect
                               value={editValue} options={['true', 'false', '']} labels={['true', 'false', 'NULL']}
@@ -751,7 +751,7 @@ export function ResultsViewer({
                               className="w-full bg-transparent border-0 outline-none focus:outline-none focus:ring-0 p-0 m-0 text-foreground text-xs"
                             />
                           )) : (
-                            <span>{showNull ? "NULL" : displayValueToString(displayValue)}</span>
+                            <span>{showNull ? "NULL" : displayValueToString(displayValue, field.dataType)}</span>
                           )}
                         </TableCell>);
                       })}
@@ -769,10 +769,10 @@ export function ResultsViewer({
                       const showNull = value === null || value === undefined;
                       return (
                         <TableCell key={field.name}
-                          className={cn("min-w-[140px] max-w-[300px] truncate relative border-r border-border last:border-r-0", field.name === 'id' && "sticky z-20 bg-background", showNull && "text-muted-foreground italic")}
-                          style={field.name === 'id' ? { left: 'var(--checkbox-w)' } : undefined}
-                          title={showNull ? "NULL" : displayValueToString(value)}>
-                          <span className="text-emerald-600/80">{showNull ? "NULL" : displayValueToString(value)}</span>
+                          className={cn("truncate relative border-r border-border last:border-r-0", field.name === 'id' && "sticky z-20 bg-background", !columnWidths[field.name] && "min-w-[140px] max-w-[300px]", columnWidths[field.name] && "max-w-none", showNull && "text-muted-foreground italic")}
+                          style={{ ...(field.name === 'id' ? { left: 'var(--checkbox-w)' } : {}), ...(columnWidths[field.name] ? { width: columnWidths[field.name] } : {}) }}
+                          title={showNull ? "NULL" : displayValueToString(value, field.dataType)}>
+                          <span className="text-emerald-600/80">{showNull ? "NULL" : displayValueToString(value, field.dataType)}</span>
                         </TableCell>
                       );
                     })}
@@ -781,12 +781,21 @@ export function ResultsViewer({
                 ))}
               </TableBody>
             </Table>
+            {resizingCol && resizeLeft !== null && (
+              <div className="pointer-events-none absolute inset-y-0 z-[70]">
+                <div className="absolute inset-y-0 w-0.5 bg-primary shadow-[0_0_6px_hsl(var(--primary))]" style={{ left: resizeLeft - 1 }} />
+                <div className="absolute top-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground bg-primary"
+                  style={{ left: resizeLeft + 6 }}>
+                  {resizingCol}
+                </div>
+              </div>
+            )}
           </div>
         </>
       ) : (
         <div className="flex h-full items-center justify-center px-4">
           {schema && table ? (
-            <span className="text-sm text-muted-foreground">This table contains no rows</span>
+            <span className="text-sm text-muted-foreground">No columns to display</span>
           ) : (
             <div className="w-full max-w-lg">
               <QuerySuccessBanner result={displayResult!} />

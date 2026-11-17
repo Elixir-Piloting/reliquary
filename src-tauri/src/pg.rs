@@ -42,6 +42,12 @@ pub fn parse_pg_url(url: &str) -> Result<UrlParts, String> {
     };
     let (user, pass) = if let Some(colon) = creds.find(':') {
         (urlencoding_or_raw(&creds[..colon]), urlencoding_or_raw(&creds[colon + 1..]))
+    } else if creds.ends_with('@') {
+        // "user@@host": either a pooler generator's empty-password marker
+        // ("user:@host" with the colon dropped) or a stored URL mangled by
+        // an older strip bug. Either way the trailing @ is a separator,
+        // not part of the role.
+        (urlencoding_or_raw(&creds[..creds.len() - 1]), String::new())
     } else {
         (urlencoding_or_raw(creds), String::new())
     };
@@ -125,6 +131,13 @@ pub fn urlencoding_or_raw(s: &str) -> String {
 
 pub fn parse_pg_connstr(url: &str) -> Result<String, String> {
     let parts = parse_pg_url(url)?;
+    Ok(build_connstr(&parts, &parts.password))
+}
+
+/// Build the tokio-postgres conn string from parsed URL parts, using `password`
+/// as the effective password. Used by `connect` so a secret resolved from the OS
+/// credential store can be injected without re-encoding it into a URL.
+pub fn build_connstr(parts: &UrlParts, password: &str) -> String {
     let mut s = format!(
         "host={} port={} dbname={}",
         connstr_value(&parts.host),
@@ -134,12 +147,12 @@ pub fn parse_pg_connstr(url: &str) -> Result<String, String> {
     if !parts.user.is_empty() {
         s.push_str(&format!(" user={}", connstr_value(&parts.user)));
     }
-    if !parts.password.is_empty() {
-        s.push_str(&format!(" password={}", connstr_value(&parts.password)));
+    if !password.is_empty() {
+        s.push_str(&format!(" password={}", connstr_value(password)));
     }
     s.push_str(&format!(" sslmode={}", normalize_conn_sslmode(&parts.sslmode)));
     s.push_str(" connect_timeout=5");
-    Ok(s)
+    s
 }
 
 /// Quote a conn string value the way `tokio_postgres::Config`'s parser
@@ -643,7 +656,7 @@ pub async fn pg_get_functions(client: &PgClient, schema: &str) -> Result<Vec<Fun
 
 pub async fn pg_get_rls_policies(client: &PgClient, schema: &str, table: &str) -> Result<Vec<RlsPolicyInfo>, String> {
     let rows = client.query(
-        r#"SELECT policyname, cmd, roles, qual, with_check
+        r#"SELECT policyname, cmd, roles, qual, with_check, permissive
            FROM pg_policies
            WHERE schemaname = $1 AND tablename = $2
            ORDER BY policyname"#,
@@ -655,6 +668,7 @@ pub async fn pg_get_rls_policies(client: &PgClient, schema: &str, table: &str) -
         roles: r.get(2),
         using_expression: r.get(3),
         check_expression: r.get(4),
+        permissive: r.get(5),
     }).collect())
 }
 
@@ -2044,6 +2058,7 @@ mod tests {
             policy_name: "p1".into(),
             command: "SELECT".into(),
             roles: vec!["app".into()],
+            permissive: true,
             using_expression: None,
             check_expression: Some("id > 0".into()),
         };

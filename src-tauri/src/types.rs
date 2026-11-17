@@ -23,8 +23,6 @@ pub struct StoredConnection {
     pub sslmode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub neon_api_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,6 +77,7 @@ pub struct RlsPolicyInfo {
     pub policy_name: String,
     pub command: String,
     pub roles: Vec<String>,
+    pub permissive: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub using_expression: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,6 +222,13 @@ pub struct LocalPgServer {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalCredentials {
+    pub user: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalPgDatabase {
     pub name: String,
     pub owner: String,
@@ -280,10 +286,73 @@ impl AppState {
         if !self.config_path.exists() {
             return Vec::new();
         }
-        match std::fs::read_to_string(&self.config_path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-            Err(_) => Vec::new(),
+        let Ok(content) = std::fs::read_to_string(&self.config_path) else {
+            return Vec::new();
+        };
+        let Ok(values) = serde_json::from_str::<Vec<serde_json::Value>>(&content) else {
+            return Vec::new();
+        };
+
+        // One-time migration: move legacy plaintext secrets (URL-embedded
+        // passwords and the old `neon_api_key` field) into the OS credential
+        // store, then persist the credential-free config. A secret is only
+        // stripped from the config once storing it actually succeeded — a
+        // broken or absent OS store must not silently destroy credentials.
+        let mut migrated = false;
+        let mut keep_password = std::collections::HashSet::<String>::new();
+        let mut keep_neon_key = std::collections::HashSet::<String>::new();
+        for v in &values {
+            let Some(id) = v.get("id").and_then(|i| i.as_str()) else { continue; };
+            if let Some(key) = v.get("neon_api_key").and_then(|k| k.as_str()) {
+                if !key.is_empty() && crate::secrets::get_neon_api_key(id).is_none() {
+                    match crate::secrets::set_neon_api_key(id, key) {
+                        Ok(()) => migrated = true,
+                        Err(_) => { keep_neon_key.insert(id.to_string()); }
+                    }
+                } else {
+                    migrated = true;
+                }
+            }
+            if let Some(url) = v.get("url").and_then(|u| u.as_str()) {
+                let (stripped, pw) = crate::secrets::split_url_password(url);
+                if !pw.is_empty() && crate::secrets::get_connection_password(id).is_none() {
+                    match crate::secrets::set_connection_password(id, &pw) {
+                        Ok(()) => { if stripped != url { migrated = true; } }
+                        Err(_) => { keep_password.insert(id.to_string()); }
+                    }
+                } else if stripped != url {
+                    migrated = true;
+                }
+            }
         }
+
+        let conns: Vec<StoredConnection> = values
+            .into_iter()
+            .filter_map(|mut v| {
+                let id = v.get("id").and_then(|i| i.as_str()).map(str::to_string);
+                let keep_pw = id.as_deref().map(|i| keep_password.contains(i)).unwrap_or(false);
+                let keep_key = id.as_deref().map(|i| keep_neon_key.contains(i)).unwrap_or(false);
+                if !keep_pw {
+                    if let Some(url) = v.get("url").and_then(|u| u.as_str()).map(str::to_string) {
+                        let (stripped, _) = crate::secrets::split_url_password(&url);
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("url".to_string(), serde_json::Value::String(stripped));
+                        }
+                    }
+                }
+                if !keep_key {
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.remove("neon_api_key");
+                    }
+                }
+                serde_json::from_value(v).ok()
+            })
+            .collect();
+
+        if migrated {
+            self.save_config(&conns);
+        }
+        conns
     }
 
     pub fn save_config(&self, conns: &[StoredConnection]) {

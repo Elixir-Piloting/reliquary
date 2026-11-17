@@ -12,6 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Separator } from "@/components/ui/separator";
 import { Plus, Search, Loader2, Pencil, Copy, Trash2, EllipsisVertical, ShieldCheck, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Persistence } from "@/lib/persistence";
+import { useEffect, useRef } from "react";
 
 const PROVIDER_BADGES: Record<string, { label: string; dot: string; text: string; ring: string }> = {
   neon: {
@@ -65,6 +67,7 @@ export default function HomePage() {
     setConnectingId(conn.id);
     try {
       await connectMutation.mutateAsync({ connectionId: conn.id, url: conn.url, readOnly: !!conn.readOnly });
+      Persistence.setActiveConnectionId(conn.id);
       navigate(`/db/${conn.id}`);
     } catch (e: any) {
       console.error("connection error", e);
@@ -73,6 +76,18 @@ export default function HomePage() {
       setConnectingId(null);
     }
   };
+
+  // Auto-reconnect to the last-used connection when the app launches so the
+  // open schema, tabs and view are restored from persistence.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    if (isLoading || connections.length === 0) return;
+    const last = Persistence.getActiveConnectionId();
+    const target = connections.find(c => c.id === last) ?? null;
+    restored.current = true;
+    if (target) handleConnectionSelect(target);
+  }, [connections, isLoading]);
 
   const handleCopyUrl = (conn: Connection) => {
     navigator.clipboard.writeText(conn.url);

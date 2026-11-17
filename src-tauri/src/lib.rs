@@ -1,6 +1,7 @@
 mod types;
 mod pg;
 mod neon;
+mod secrets;
 mod commands;
 
 use std::collections::HashMap;
@@ -62,6 +63,10 @@ pub fn run() {
             commands::drop_local_database,
             commands::list_neon_branches,
             commands::save_neon_api_key,
+            commands::get_neon_api_key,
+            commands::get_local_password,
+            commands::set_local_password,
+            commands::remove_local_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

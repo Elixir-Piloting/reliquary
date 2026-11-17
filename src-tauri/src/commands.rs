@@ -15,16 +15,19 @@ pub async fn add_connection(name: String, url: String, read_only: bool, state: t
     let mut config = state.load_config();
     let id = uuid::Uuid::new_v4().to_string();
     let provider = detect_provider(&url).to_string();
+    let (stored_url, password) = crate::secrets::split_url_password(&url);
+    if !password.is_empty() {
+        crate::secrets::set_connection_password(&id, &password)?;
+    }
     let conn = StoredConnection {
         id: id.clone(),
         name,
-        url,
+        url: stored_url,
         provider: Some(provider),
         color: None,
         created_at: Some(Utc::now().to_rfc3339()),
         sslmode: None,
         read_only: Some(read_only),
-        neon_api_key: None,
     };
     config.push(conn.clone());
     state.save_config(&config);
@@ -36,7 +39,18 @@ pub async fn update_connection(id: String, name: Option<String>, url: Option<Str
     let mut config = state.load_config();
     if let Some(entry) = config.iter_mut().find(|c| c.id == id) {
         if let Some(n) = name { entry.name = n; }
-        if let Some(u) = url { let provider = detect_provider(&u).to_string(); entry.url = u; entry.provider = Some(provider); }
+        if let Some(u) = url {
+            let (stored_url, password) = crate::secrets::split_url_password(&u);
+            // Only overwrite the stored secret when a new password was supplied.
+            // A password-less URL (e.g. a name-only edit after migration) keeps
+            // the existing credential in the OS store.
+            if !password.is_empty() {
+                crate::secrets::set_connection_password(&id, &password)?;
+            }
+            let provider = detect_provider(&stored_url).to_string();
+            entry.url = stored_url;
+            entry.provider = Some(provider);
+        }
         if let Some(ro) = read_only { entry.read_only = Some(ro); }
         state.save_config(&config);
         Ok(())
@@ -50,8 +64,27 @@ pub async fn delete_connection(id: String, state: tauri::State<'_, AppState>) ->
     let mut config = state.load_config();
     config.retain(|c| c.id != id);
     state.save_config(&config);
+    crate::secrets::delete_connection_password(&id);
+    crate::secrets::delete_neon_api_key(&id);
     state.connections.lock().await.remove(&id);
     Ok(())
+}
+
+/// Format an error with its full cause chain. tokio-postgres's `Display` only
+/// prints the top-level kind ("invalid configuration", "db error", …) and keeps
+/// the actual reason (missing password, auth failure, cert error) in `source()`,
+/// so the raw string gives users no clue what went wrong.
+fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut cur = err.source();
+    while let Some(src) = cur {
+        let msg = src.to_string();
+        if !parts.contains(&msg) {
+            parts.push(msg);
+        }
+        cur = src.source();
+    }
+    parts.join(": ")
 }
 
 #[tauri::command]
@@ -68,7 +101,7 @@ pub async fn test_connection(url: String, _state: tauri::State<'_, AppState>) ->
                 drop(client);
                 Ok(TestConnectionResult { success: true, error: None, server_version: ver })
             }
-            Ok(Err(e)) => Ok(TestConnectionResult { success: false, error: Some(e.to_string()), server_version: None }),
+            Ok(Err(e)) => Ok(TestConnectionResult { success: false, error: Some(error_chain(&e)), server_version: None }),
             Err(_) => Ok(TestConnectionResult { success: false, error: Some("Timed out (5s)".into()), server_version: None }),
         }
     } else {
@@ -86,7 +119,18 @@ pub async fn connect(connection_id: String, url: String, read_only: bool, state:
     }
 
     let parts = pg::parse_pg_url(&url)?;
-    let conn_str = pg::parse_pg_connstr(&url)?;
+    // Resolve the password: a password embedded in the incoming URL wins (and
+    // is stored), otherwise fall back to the OS credential store. This keeps
+    // connections working after the URL is stored password-free.
+    let mut password = parts.password.clone();
+    if password.is_empty() {
+        if let Some(stored) = crate::secrets::get_connection_password(&connection_id) {
+            password = stored;
+        }
+    } else {
+        let _ = crate::secrets::set_connection_password(&connection_id, &password);
+    }
+    let conn_str = pg::build_connstr(&parts, &password);
     let tls = pg::build_tls(&parts.sslmode)?;
     let pg_config = tokio_postgres::Config::from_str(&conn_str)
         .map_err(|e| format!("Invalid connection string: {}", e))?;
@@ -112,7 +156,21 @@ pub async fn connect(connection_id: String, url: String, read_only: bool, state:
             );
             Ok(format!("Connected to PostgreSQL: {}{}{}", ver, ro_suffix, hint))
         }
-        Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
+        Ok(Err(e)) => {
+            let msg = format!("Connection failed: {}", error_chain(&e));
+            // "password missing" surfaces when the server asks for auth and no
+            // password was resolved (not embedded in the URL, none in the OS
+            // store). Point at the remedy instead of the opaque config error.
+            let msg = if msg.contains("password missing") && !parts.user.is_empty() {
+                format!(
+                    "{}\nNo stored password was found for user '{}' — edit the connection and re-enter its password.",
+                    msg, parts.user
+                )
+            } else {
+                msg
+            };
+            Err(msg)
+        }
         Err(_) => Err("Connection timed out (5s)".into()),
     }
 }
@@ -356,15 +414,30 @@ pub async fn list_neon_branches(connection_id: String, api_key: String, state: t
 }
 
 #[tauri::command]
-pub async fn save_neon_api_key(connection_id: String, api_key: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut config = state.load_config();
-    if let Some(entry) = config.iter_mut().find(|c| c.id == connection_id) {
-        entry.neon_api_key = Some(api_key);
-        state.save_config(&config);
-        Ok(())
-    } else {
-        Err("Connection not found".into())
-    }
+pub async fn save_neon_api_key(connection_id: String, api_key: String, _state: tauri::State<'_, AppState>) -> Result<(), String> {
+    crate::secrets::set_neon_api_key(&connection_id, &api_key)
+}
+
+#[tauri::command]
+pub async fn get_neon_api_key(connection_id: String, _state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(crate::secrets::get_neon_api_key(&connection_id))
+}
+
+#[tauri::command]
+pub async fn get_local_password(host: String, port: u16, _state: tauri::State<'_, AppState>) -> Result<Option<LocalCredentials>, String> {
+    Ok(crate::secrets::get_local_password(&host, port)
+        .map(|(user, password)| LocalCredentials { user, password }))
+}
+
+#[tauri::command]
+pub async fn set_local_password(host: String, port: u16, user: String, password: String, _state: tauri::State<'_, AppState>) -> Result<(), String> {
+    crate::secrets::set_local_password(&host, port, &user, &password)
+}
+
+#[tauri::command]
+pub async fn remove_local_password(host: String, port: u16, _state: tauri::State<'_, AppState>) -> Result<(), String> {
+    crate::secrets::remove_local_password(&host, port);
+    Ok(())
 }
 
 #[tauri::command]

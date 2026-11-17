@@ -1,11 +1,11 @@
 import { cn } from "@/lib/utils";
 
-interface SwitchProps { checked?: boolean; onCheckedChange?: (checked: boolean) => void; id?: string; }
+interface SwitchProps { checked?: boolean; onCheckedChange?: (checked: boolean) => void; id?: string; disabled?: boolean; }
 
-export function Switch({ checked, onCheckedChange, id }: SwitchProps) {
+export function Switch({ checked, onCheckedChange, id, disabled }: SwitchProps) {
   return (
-    <button type="button" role="switch" aria-checked={checked} id={id}
-      onClick={() => onCheckedChange?.(!checked)}
+    <button type="button" role="switch" aria-checked={checked} id={id} disabled={disabled}
+      onClick={() => { if (!disabled) onCheckedChange?.(!checked); }}
       className={cn(
         "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
         checked ? "bg-primary" : "bg-input"

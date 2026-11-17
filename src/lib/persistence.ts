@@ -1,5 +1,11 @@
 const STORAGE_PREFIX = "relic_";
 
+export interface QueryHistoryEntry {
+  query: string;
+  pinned: boolean;
+  addedAt: string;
+}
+
 export const Persistence = {
   getActiveConnectionId(): string | null {
     if (typeof window === "undefined") return null;
@@ -55,6 +61,28 @@ export const Persistence = {
     catch { return ["public"]; }
   },
 
+  getSelectedSchema(connectionId: string): string | null {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(`${STORAGE_PREFIX}selected_schema_${connectionId}`);
+  },
+
+  setSelectedSchema(connectionId: string, schema: string | null): void {
+    if (typeof window === "undefined") return;
+    if (schema) localStorage.setItem(`${STORAGE_PREFIX}selected_schema_${connectionId}`, schema);
+    else localStorage.removeItem(`${STORAGE_PREFIX}selected_schema_${connectionId}`);
+  },
+
+  getExpandedTables(connectionId: string): string[] {
+    if (typeof window === "undefined") return [];
+    try { const stored = localStorage.getItem(`${STORAGE_PREFIX}expanded_tables_${connectionId}`); return stored ? JSON.parse(stored) : []; }
+    catch { return []; }
+  },
+
+  setExpandedTables(connectionId: string, keys: string[]): void {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(`${STORAGE_PREFIX}expanded_tables_${connectionId}`, JSON.stringify(keys));
+  },
+
   getQueryTabs(connectionId: string): Array<{ id: string; label: string; query: string }> {
     if (typeof window === "undefined") return [];
     try { const stored = localStorage.getItem(`${STORAGE_PREFIX}query_tabs_${connectionId}`); return stored ? JSON.parse(stored) : []; }
@@ -83,12 +111,17 @@ export const Persistence = {
     this.setQueryTabs(connectionId, tabs.map(t => t.id === tabId ? { ...t, query } : t));
   },
 
-  getQueryHistory(connectionId: string): string[] {
+  getQueryHistory(connectionId: string): QueryHistoryEntry[] {
     if (typeof window === "undefined") return [];
     try {
       const stored = localStorage.getItem(`${STORAGE_PREFIX}query_history_${connectionId}`);
       const parsed = stored ? JSON.parse(stored) : [];
-      return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+      if (!Array.isArray(parsed)) return [];
+      // One-time migration: the pre-1.0 format was a plain string list.
+      return parsed.map((q): QueryHistoryEntry => {
+        if (typeof q === "string") return { query: q, pinned: false, addedAt: "" };
+        return { query: String(q.query ?? ""), pinned: !!q.pinned, addedAt: String(q.addedAt || "") };
+      }).filter(e => e.query.trim() !== "");
     } catch { return []; }
   },
 
@@ -96,9 +129,33 @@ export const Persistence = {
     if (typeof window === "undefined") return;
     const trimmed = query.trim();
     if (!trimmed) return;
-    const deduped = this.getQueryHistory(connectionId).filter(q => q !== trimmed);
-    deduped.unshift(trimmed);
-    localStorage.setItem(`${STORAGE_PREFIX}query_history_${connectionId}`, JSON.stringify(deduped.slice(0, 50)));
+    const history = this.getQueryHistory(connectionId);
+    // Dedup by query text, preserving the pinned flag of the older entry.
+    let pinned = false;
+    const deduped = history.filter(h => {
+      if (h.query !== trimmed) return true;
+      pinned = h.pinned;
+      return false;
+    });
+    deduped.unshift({ query: trimmed, pinned, addedAt: new Date().toISOString() });
+    // Keep pinned entries even when the cap is hit; evict oldest unpinned first.
+    const pinnedEntries = deduped.filter(h => h.pinned);
+    const unpinned = deduped.filter(h => !h.pinned);
+    const kept = [...pinnedEntries, ...unpinned].slice(0, 100);
+    localStorage.setItem(`${STORAGE_PREFIX}query_history_${connectionId}`, JSON.stringify(kept));
+  },
+
+  toggleQueryPinned(connectionId: string, query: string): void {
+    if (typeof window === "undefined") return;
+    const history = this.getQueryHistory(connectionId);
+    const next = history.map(h => h.query === query ? { ...h, pinned: !h.pinned } : h);
+    localStorage.setItem(`${STORAGE_PREFIX}query_history_${connectionId}`, JSON.stringify(next));
+  },
+
+  removeQueryFromHistory(connectionId: string, query: string): void {
+    if (typeof window === "undefined") return;
+    const history = this.getQueryHistory(connectionId).filter(h => h.query !== query);
+    localStorage.setItem(`${STORAGE_PREFIX}query_history_${connectionId}`, JSON.stringify(history));
   },
 
   clearQueryHistory(connectionId: string): void {
@@ -186,19 +243,4 @@ export const Persistence = {
     return all;
   },
 
-  getServerPassword(host: string, port: number): { user: string; password: string } | null {
-    if (typeof window === "undefined") return null;
-    try { const stored = localStorage.getItem(`${STORAGE_PREFIX}server_${host}_${port}`); return stored ? JSON.parse(stored) : null; }
-    catch { return null; }
-  },
-
-  setServerPassword(host: string, port: number, user: string, password: string): void {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(`${STORAGE_PREFIX}server_${host}_${port}`, JSON.stringify({ user, password }));
-  },
-
-  removeServerPassword(host: string, port: number): void {
-    if (typeof window === "undefined") return;
-    localStorage.removeItem(`${STORAGE_PREFIX}server_${host}_${port}`);
-  },
-};
+  };

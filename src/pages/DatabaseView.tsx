@@ -56,6 +56,12 @@ export default function DatabaseView() {
   const totalCount = activeTab ? (totalCountCache[tabId] ?? 0) : 0;
   const page = activeTab ? (pageByTab[tabId] ?? 1) : 1;
 
+  // The schema the user is currently working in — used to seed the schema
+  // visualizer so it opens on the active schema rather than always "public".
+  // Prefer the active table's schema, falling back to the last-selected schema.
+  const activeSchema = activeTab?.kind === "table" ? activeTab.schema
+    : (connectionId ? Persistence.getSelectedSchema(connectionId) : null);
+
   const sort = activeTab ? (sortByTab[activeTab.id] ?? null) : null;
   const filters = useMemo(() => (activeTab ? (filtersByTab[activeTab.id] ?? EMPTY_FILTERS) : EMPTY_FILTERS), [activeTab, filtersByTab]);
   const hiddenColumns = useMemo(() => (activeTab ? (hiddenByTab[activeTab.id] ?? EMPTY_HIDDEN) : EMPTY_HIDDEN), [activeTab, hiddenByTab]);
@@ -321,7 +327,7 @@ export default function DatabaseView() {
     if (activeTab.kind === "visualizer") {
       return (
         <div className="flex-1 min-h-0">
-          {connectionId ? <SchemaVisualizer connectionId={connectionId} /> : null}
+          {connectionId ? <SchemaVisualizer connectionId={connectionId} initialSchema={activeSchema || undefined} /> : null}
         </div>
       );
     }

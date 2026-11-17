@@ -6,9 +6,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Server } from "lucide-react";
 import { toast } from "sonner";
-import { Persistence } from "@/lib/persistence";
+import API, { type LocalPgDatabase } from "@/lib/ipc-client";
 import { useLocalServers, useLocalPgDatabases } from "@/lib/query/hooks/use-local-pg-servers";
-import type { LocalPgDatabase } from "@/lib/ipc-client";
 import { buildConnectionURL } from "@/lib/connections/url-parser";
 import type { LocalPostgresServer, LocalPostgresManagerProps } from "./types";
 import { ServerList } from "./ServerList";
@@ -23,6 +22,10 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
   // Credentials that successfully connected during this session — preferred over
   // possibly-stale saved passwords when connecting to a database.
   const [workingCreds, setWorkingCreds] = useState<Record<string, { user: string; password: string }>>({});
+
+  // Saved credentials loaded from the OS credential store (keyring), keyed by
+  // `host:port`. Kept as state because reading them from the backend is async.
+  const [savedCreds, setSavedCreds] = useState<Record<string, { user: string; password: string }>>({});
 
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [passwordForServer, setPasswordForServer] = useState<LocalPostgresServer | null>(null);
@@ -43,8 +46,9 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
     }
 
     server.expanded = true;
-    const saved = Persistence.getServerPassword(server.host, server.port);
+    const saved = await API.getLocalPassword(server.host, server.port);
     if (saved) {
+      setSavedCreds(prev => ({ ...prev, [key]: saved }));
       setLoadingDb(key);
       try {
         const dbs = await loadDatabases.mutateAsync({ host: server.host, port: server.port, user: saved.user, password: saved.password });
@@ -54,7 +58,8 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
         // Saved credentials failed (wrong/expired password). Drop them and
         // surface an empty dialog so the user can enter the correct password
         // instead of being stuck with the bad saved one.
-        Persistence.removeServerPassword(server.host, server.port);
+        await API.removeLocalPassword(server.host, server.port);
+        setSavedCreds(prev => { const next = { ...prev }; delete next[key]; return next; });
         setTempUser(saved.user || "postgres");
         setTempPassword("");
         setPasswordForServer(server);
@@ -99,9 +104,11 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
       setWorkingCreds(prev => ({ ...prev, [key]: { user: tempUser, password: tempPassword } }));
       // Only persist credentials after a successful connection.
       if (savePassword) {
-        Persistence.setServerPassword(passwordForServer.host, passwordForServer.port, tempUser, tempPassword);
+        await API.setLocalPassword(passwordForServer.host, passwordForServer.port, tempUser, tempPassword);
+        setSavedCreds(prev => ({ ...prev, [key]: { user: tempUser, password: tempPassword } }));
       } else {
-        Persistence.removeServerPassword(passwordForServer.host, passwordForServer.port);
+        await API.removeLocalPassword(passwordForServer.host, passwordForServer.port);
+        setSavedCreds(prev => { const next = { ...prev }; delete next[key]; return next; });
       }
       setShowPasswordDialog(false);
       setPasswordForServer(null);
@@ -121,7 +128,7 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
   ) => {
     const key = `${server.host}:${server.port}`;
     const working = workingCreds[key];
-    const saved = Persistence.getServerPassword(server.host, server.port);
+    const saved = savedCreds[key];
     // Prefer creds that just worked in this session, then saved, then defaults.
     const finalUser = user || working?.user || saved?.user || "postgres";
     const finalPassword = password || working?.password || saved?.password || "";
@@ -194,10 +201,12 @@ export function LocalPostgresManager({ onServerSelect }: LocalPostgresManagerPro
               <Checkbox id="save" checked={savePassword} onCheckedChange={c => setSavePassword(!!c)} />
               <label htmlFor="save" className="text-sm">Save password</label>
             </div>
-            {passwordForServer && Persistence.getServerPassword(passwordForServer.host, passwordForServer.port) && (
+            {passwordForServer && savedCreds[`${passwordForServer.host}:${passwordForServer.port}`] && (
               <button
-                onClick={() => {
-                  Persistence.removeServerPassword(passwordForServer.host, passwordForServer.port);
+                onClick={async () => {
+                  const key = `${passwordForServer.host}:${passwordForServer.port}`;
+                  await API.removeLocalPassword(passwordForServer.host, passwordForServer.port);
+                  setSavedCreds(prev => { const next = { ...prev }; delete next[key]; return next; });
                   toast.success("Saved password cleared");
                 }}
                 className="text-xs text-muted-foreground hover:text-destructive transition-colors"

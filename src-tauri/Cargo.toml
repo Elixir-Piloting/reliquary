@@ -27,3 +27,8 @@ deadpool-postgres = "0.14.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = "2.5.1"
+# keyring v3 ships NO credential store by default: with no features enabled,
+# every secret goes to an in-process mock that vanishes when the app exits,
+# while the config migration strips passwords from disk — leaving saved
+# connections permanently password-less ("password missing" on connect).
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }

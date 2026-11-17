@@ -14,6 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { getProviderMetadata } from "@/lib/db/providers";
 import { useConnections, useConnect } from "@/lib/query/hooks/use-connections";
 import type { Connection } from "@/lib/ipc-client";
+import { Persistence } from "@/lib/persistence";
 import { ChevronDown, Home, Settings, Plus, Loader2, Pencil } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -65,6 +66,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
       await connectMutation.mutateAsync({ connectionId: conn.id, url: conn.url, readOnly: !!conn.readOnly });
       setCurrentConnection(conn);
       setConnectionsPopoverOpen(false);
+      Persistence.setActiveConnectionId(conn.id);
       navigate(`/db/${conn.id}`);
     } catch (e) {
       console.error("Connection failed", e);

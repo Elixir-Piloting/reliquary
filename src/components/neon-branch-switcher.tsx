@@ -47,7 +47,8 @@ export function NeonBranchSwitcher({ connectionId, readOnly }: NeonBranchSwitche
     try {
       const list = await API.listConnections();
       const conn = list.find((c: Connection) => c.id === connectionId);
-      if (alive()) setApiKey(conn?.neonApiKey ?? null);
+      const key = await API.getNeonApiKey(connectionId);
+      if (alive()) setApiKey(key ?? null);
       if (alive()) setConnectionUrl(conn?.url ?? "");
     } catch {
       if (alive()) setApiKey(null);

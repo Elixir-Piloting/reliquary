@@ -12,7 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X, Loader2, Save, ArrowLeft, Check, KeyRound, GripVertical } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ColumnInfo, TableInfo } from "@/lib/db/types";
+import type { ColumnInfo, TableInfo, RelationshipInfo } from "@/lib/db/types";
 import { useRightSidebar } from "@/components/right-sidebar-context";
 import { CreateTableSqlPanel } from "@/components/create-table-sql-panel";
 
@@ -191,6 +191,7 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     ? [{ ...emptyColumn(), name: "id", type: "BIGINT", nullable: false, primaryKey: true, autoIncrement: true }]
     : []);
   const [existingCols, setExistingCols] = useState<ColumnInfo[]>([]);
+  const [existingFks, setExistingFks] = useState<RelationshipInfo[]>([]);
   const [loading, setLoading] = useState(!isCreate);
   const [saving, setSaving] = useState(false);
   // Inline-edit state for existing columns
@@ -205,10 +206,16 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
   const reload = useCallback(async () => {
     if (!table) return;
     try {
-      const cols = await invoke<ColumnInfo[]>("get_columns", { connectionId, schema, table });
+      const [cols, fks, tables] = await Promise.all([
+        invoke<ColumnInfo[]>("get_columns", { connectionId, schema, table }),
+        invoke<RelationshipInfo[]>("get_relationships", { connectionId, schema, table }),
+        invoke<TableInfo[]>("get_tables", { connectionId, schema }),
+      ]);
       setExistingCols(cols);
+      setExistingFks(fks || []);
+      setRefTables(tables || []);
     } catch (e: any) {
-      toast.error("Failed to load columns", { description: String(e) });
+      toast.error("Failed to load table", { description: String(e) });
     }
   }, [connectionId, schema, table]);
 
@@ -349,6 +356,23 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
     await runAlter(sql, `"${col.columnName}" ${col.isNullable ? "set NOT NULL" : "nullable"}`);
   };
 
+  const handleAddFk = async (fk: ForeignKeyDraft) => {
+    if (!table) return;
+    if (!fk.column.trim() || !fk.refTable.trim() || !fk.refColumn.trim()) { toast.error("Foreign key is incomplete"); return; }
+    const cn = `fk_${table}_${fk.column}`.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+    const sql = `ALTER TABLE "${schema}"."${table}" ADD CONSTRAINT "${cn}" ` +
+      `FOREIGN KEY ("${fk.column}") REFERENCES "${fk.refSchema}"."${fk.refTable}"("${fk.refColumn}") ` +
+      `ON DELETE ${fk.onDelete} ON UPDATE ${fk.onUpdate};`;
+    await runAlter(sql, `Foreign key "${cn}" added`);
+    const idx = fkDrafts.findIndex(f => f.id === fk.id);
+    if (idx !== -1) setFkDrafts(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleDropFk = async (fk: RelationshipInfo) => {
+    if (!table) return;
+    await runAlter(`ALTER TABLE "${schema}"."${table}" DROP CONSTRAINT "${fk.constraintName}";`, `Foreign key "${fk.constraintName}" dropped`);
+  };
+
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
   const headerBtn = (isCreate ? (
@@ -481,10 +505,37 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
             <Button variant="outline" size="sm" onClick={addColumn}><Plus className="h-4 w-4 mr-1" />Add Column</Button>
           </div>
 
-          {/* Foreign keys — UI only for now */}
-          {isCreate && (
+          {!isCreate && existingFks.length > 0 && (
             <div className="space-y-2">
-              <Label>Foreign Keys</Label>
+              <Label>Foreign Keys ({existingFks.length})</Label>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b border-border">
+                  <div className="col-span-3">Column</div>
+                  <div className="col-span-4">References</div>
+                  <div className="col-span-4">Constraint</div>
+                  <div className="col-span-1" />
+                </div>
+                {existingFks.map(fk => (
+                  <div key={fk.constraintName} className="grid grid-cols-12 gap-2 px-3 py-2 border-b border-border last:border-b-0 text-sm items-center">
+                    <div className="col-span-3 font-mono">{fk.sourceColumn}</div>
+                    <div className="col-span-4 font-mono text-muted-foreground truncate" title={`${fk.targetSchema}.${fk.targetTable}.${fk.targetColumn}`}>
+                      {fk.targetSchema}.{fk.targetTable}({fk.targetColumn})
+                    </div>
+                    <div className="col-span-4 font-mono text-muted-foreground truncate" title={fk.constraintName}>{fk.constraintName}</div>
+                    <div className="col-span-1 flex items-center justify-end">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDropFk(fk)} disabled={saving} title="Drop this foreign key">
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Foreign keys — new constraints (create: baked into CREATE TABLE; edit: ALTER TABLE ADD CONSTRAINT) */}
+          <div className="space-y-2">
+            <Label>{isCreate ? "Foreign Keys" : "Add Foreign Keys"}</Label>
               <div className={FK_GRID + " grid items-center gap-2 text-xs font-medium text-muted-foreground border-b border-border/70 pb-1.5"}>
                 <div className={cellClass}>Column</div>
                 <div className={cellClass}>Reference Table</div>
@@ -499,7 +550,10 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
                     <Select value={fk.column} onValueChange={v => updateFk(i, "column", v)}>
                       <SelectTrigger className="h-8"><SelectValue placeholder="Column" /></SelectTrigger>
                       <SelectContent>
-                        {columns.filter(c => c.name.trim()).map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                        {[
+                          ...(isCreate ? [] : existingCols.map(c => c.columnName)),
+                          ...columns.filter(c => c.name.trim()).map(c => c.name),
+                        ].map((name, j) => <SelectItem key={j} value={name}>{name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
@@ -531,14 +585,18 @@ export function TableEditor({ mode, schema, table, connectionId, onCreated, onDo
                       <SelectContent>{FK_ACTIONS.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
-                  <div className={cellClass + " flex items-center justify-end"}>
+                  <div className={cellClass + " flex items-center justify-end gap-1"}>
+                    {!isCreate && (
+                      <Button size="sm" onClick={() => handleAddFk(fk)} disabled={saving || !fk.column.trim() || !fk.refTable.trim() || !fk.refColumn.trim()} className="h-7" title="Add this foreign key">
+                        <Check className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => removeFk(i)} title="Remove foreign key"><X className="h-4 w-4" /></Button>
                   </div>
                 </div>
               ))}
               <Button variant="outline" size="sm" onClick={addFk}><Plus className="h-4 w-4 mr-1" />Add Foreign Key</Button>
             </div>
-          )}
 
           {isCreate && (
             <p className="text-sm text-muted-foreground">SQL preview is shown in the right sidebar (Row Inspector).</p>

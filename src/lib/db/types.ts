@@ -65,6 +65,7 @@ export interface RlsPolicyInfo {
   policyName: string;
   command: string;
   roles: string[];
+  permissive: boolean;
   usingExpression?: string | null;
   checkExpression?: string | null;
 }

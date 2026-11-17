@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, KeyRound, ChevronRight, Trash2, RotateCcw, Braces, List } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { getInputType, isPotentialEnum, isNumericType, isTextareaType, toSqlParamValue, formatValueForInput, displayValueToString } from "./field-types";
+import { getInputType, isPotentialEnum, isNumericType, isTextareaType, toSqlParamValue, formatValueForInput, displayValueToString, arrayToPgLiteral, parsePgArrayLiteral } from "./field-types";
 import type { RowMutationStatement } from "@/lib/db/types";
 import type { ColumnInfo } from "@/lib/ipc-client";
 import { cn } from "@/lib/utils";
@@ -86,6 +86,12 @@ function FieldControl({ column, value, enumValues, onValue, disabled, changed }:
     );
   }
   const type = inputType === 'date' ? 'date' : inputType === 'datetime-local' ? 'datetime-local' : 'text';
+  if (inputType === 'array') {
+    return <ArrayFieldEditor value={value} onValue={onValue} disabled={disabled} changedCls={changedCls} />;
+  }
+  if (inputType === 'json') {
+    return <JsonFieldEditor value={value} onValue={onValue} disabled={disabled} changedCls={changedCls} />;
+  }
   if (isNumericType(column.dataType)) {
     return (
       <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className={cn("h-9 font-mono text-xs", changedCls)} type="number" inputMode="decimal" disabled={disabled} />
@@ -98,6 +104,102 @@ function FieldControl({ column, value, enumValues, onValue, disabled, changed }:
   }
   return (
     <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className={cn("h-9 font-mono text-xs", changedCls)} type={type} disabled={disabled} />
+  );
+}
+
+/** Tag-list editor for Postgres array columns: add/remove items, serialized as `{a,b,c}`. */
+function ArrayFieldEditor({ value, onValue, disabled, changedCls }: {
+  value: string;
+  onValue: (v: string) => void;
+  disabled?: boolean;
+  changedCls: string;
+}) {
+  const isNull = value.trim() === '';
+  const parsed = useMemo(() => {
+    if (isNull) return { items: [] as string[] };
+    const items = parsePgArrayLiteral(value);
+    return { items: items ?? [] };
+  }, [value, isNull]);
+  const invalid = !isNull && parsePgArrayLiteral(value) === null;
+  const [draft, setDraft] = useState("");
+
+  const commit = (items: string[]) => onValue(arrayToPgLiteral(items));
+
+  const add = () => {
+    const el = draft.trim();
+    if (!el) return;
+    commit([...parsed.items, el]);
+    setDraft("");
+  };
+
+  // A literal the parser can't handle (e.g. multidimensional) falls back to
+  // free-text so nothing is lost.
+  if (invalid) {
+    return <Input value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className={cn("h-9 font-mono text-xs", changedCls)} disabled={disabled} />;
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className={cn("flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5", changedCls || "border-input bg-transparent")}>
+        {isNull && <span className="text-xs italic text-muted-foreground">NULL</span>}
+        {!isNull && parsed.items.length === 0 && <span className="text-xs italic text-muted-foreground">empty array</span>}
+        {!isNull && parsed.items.map((el, i) => (
+          <span key={i} className="inline-flex items-center gap-1 rounded bg-accent px-1.5 py-0.5 font-mono text-xs text-accent-foreground">
+            {el === '' ? <span className="italic text-muted-foreground">NULL</span> : el}
+            {!disabled && (
+              <button type="button" onClick={() => commit(parsed.items.filter((_, k) => k !== i))} className="text-muted-foreground hover:text-destructive" aria-label="Remove item">×</button>
+            )}
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); add(); }
+            else if (e.key === 'Backspace' && draft === '' && parsed.items.length > 0) commit(parsed.items.slice(0, -1));
+          }}
+          onBlur={() => { if (draft.trim()) add(); }}
+          placeholder={isNull ? "Add item…" : "Add item…"}
+          disabled={disabled}
+          className="h-7 w-24 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      {!isNull && (
+        <button type="button" onClick={() => onValue('')} disabled={disabled} className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-destructive">
+          Set NULL
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** JSON/JSONB editor: textarea with live validity check and a pretty-format helper. */
+function JsonFieldEditor({ value, onValue, disabled, changedCls }: {
+  value: string;
+  onValue: (v: string) => void;
+  disabled?: boolean;
+  changedCls: string;
+}) {
+  const validation = useMemo(() => {
+    if (value.trim() === '') return 'NULL' as const;
+    try { JSON.parse(value); return 'valid' as const; }
+    catch { return 'invalid' as const; }
+  }, [value]);
+
+  return (
+    <div className="space-y-1">
+      <Textarea value={value} onChange={e => onValue(e.target.value)} placeholder="NULL" className={cn("min-h-[120px] font-mono text-xs leading-relaxed", changedCls)} rows={4} disabled={disabled} />
+      <div className="flex items-center justify-between">
+        <span className={cn("text-[10px]", validation === 'invalid' ? "text-destructive" : "text-muted-foreground")}>
+          {validation === 'NULL' ? 'NULL — enter a JSON value' : validation === 'valid' ? 'Valid JSON' : 'Invalid JSON'}
+        </span>
+        <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[10px]" disabled={disabled} onClick={() => {
+          try { onValue(JSON.stringify(JSON.parse(value), null, 2)); } catch { /* leave as-is */ }
+        }}>
+          Format
+        </Button>
+      </div>
+    </div>
   );
 }
 

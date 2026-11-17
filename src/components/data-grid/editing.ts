@@ -1,6 +1,5 @@
 "use client";
-import { GridCellKind, type EditableGridCell } from "@glideapps/glide-data-grid";
-import { toSqlParamValue, isPotentialEnum } from "@/components/results-viewer/field-types";
+import { toSqlParamValue } from "@/components/results-viewer/field-types";
 import type { PendingChange } from "@/components/results-viewer/types";
 
 export type EditOp = "update" | "insert" | "delete";
@@ -131,27 +130,4 @@ function getPkValues(row: Record<string, unknown>, pkColumns: string[]): Record<
   const pks: Record<string, unknown> = {};
   for (const pk of pkColumns) if (pk in row) pks[pk] = row[pk];
   return pks;
-}
-
-/**
- * Convert a Glide edited cell back into its canonical string form so it can be
- * stored in a PendingChange and later bound via toSqlParamValue.
- */
-export function cellEditToString(cell: EditableGridCell): string {
-  switch (cell.kind) {
-    case GridCellKind.Number:
-      return cell.data === undefined ? "" : String(cell.data);
-    case GridCellKind.Boolean:
-      return cell.data === true ? "true" : cell.data === false ? "false" : "";
-    case GridCellKind.Custom:
-      return (cell as unknown as { data?: { display?: string } }).data?.display ?? "";
-    default:
-      return (cell as { data?: string }).data ?? "";
-  }
-}
-
-/** Extract the enum option list from a column's dataType cache. */
-export function enumOptions(dataType: string, enumValues: string[] | null | undefined): string[] | null {
-  if (!isPotentialEnum(dataType)) return null;
-  return enumValues && enumValues.length > 0 ? enumValues : null;
 }

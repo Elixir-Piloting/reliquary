@@ -10,7 +10,6 @@ export interface Connection {
   createdAt?: string;
   sslmode?: string;
   readOnly?: boolean;
-  neonApiKey?: string;
 }
 
 export interface SchemaInfo {
@@ -52,6 +51,7 @@ export interface RlsPolicyInfo {
   policyName: string;
   command: string;
   roles: string[];
+  permissive: boolean;
   usingExpression?: string | null;
   checkExpression?: string | null;
 }
@@ -167,6 +167,11 @@ export interface ConnectionInfo {
   supabaseSchemas: string[];
   readOnly: boolean;
   pooledEndpoint: boolean;
+}
+
+export interface LocalCredentials {
+  user: string;
+  password: string;
 }
 
 export interface NeonBranch {
@@ -303,10 +308,22 @@ const API = {
   async saveNeonApiKey(connectionId: string, apiKey: string): Promise<void> {
     return invoke("save_neon_api_key", { connectionId, apiKey });
   },
+  async getNeonApiKey(connectionId: string): Promise<string | null> {
+    return invoke("get_neon_api_key", { connectionId });
+  },
 
   // Local PostgreSQL
   async detectLocalServers(): Promise<LocalPgServer[]> {
     return invoke("detect_local_servers");
+  },
+  async getLocalPassword(host: string, port: number): Promise<LocalCredentials | null> {
+    return invoke("get_local_password", { host, port });
+  },
+  async setLocalPassword(host: string, port: number, user: string, password: string): Promise<void> {
+    return invoke("set_local_password", { host, port, user, password });
+  },
+  async removeLocalPassword(host: string, port: number): Promise<void> {
+    return invoke("remove_local_password", { host, port });
   },
   async listLocalDatabases(host: string, port: number, user?: string, password?: string): Promise<LocalPgDatabase[]> {
     return invoke("list_local_databases", { host, port, user, password });

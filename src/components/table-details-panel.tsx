@@ -3,11 +3,17 @@ import { useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, Zap, Code2, ShieldCheck } from "lucide-react";
+import { Loader2, Zap, Code2, ShieldCheck, Pencil, Trash2, Plus } from "lucide-react";
 import API from "@/lib/ipc-client";
 import type { TriggerInfo, FunctionInfo, RlsPolicyInfo } from "@/lib/db/types";
 import { cn } from "@/lib/utils";
+import {
+  TriggerDialog, FunctionDialog, PolicyDialog, DropDdlDialog,
+  runDdlSql, triggerDropSql, triggerToggleSql, functionDropSql, policyDropSql, rlsToggleSql,
+} from "@/components/table-details-editors";
 
 interface TableDetailsPanelProps {
   open: boolean;
@@ -58,12 +64,20 @@ function ErrorState({ message }: { message: string }) {
   return <div className="py-6 text-center text-sm text-destructive px-4 break-words">{message}</div>;
 }
 
+interface DropTarget { sql: string; message: string; okMsg: string; }
+
 export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, table }: TableDetailsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>("triggers");
   const [loaded, setLoaded] = useState<Set<TabId>>(new Set());
   const [triggers, setTriggers] = useState<TabState<TriggerInfo>>({ data: null, loading: false, error: null });
   const [functions, setFunctions] = useState<TabState<FunctionInfo>>({ data: null, loading: false, error: null });
   const [rls, setRls] = useState<TabState<RlsPolicyInfo>>({ data: null, loading: false, error: null });
+  const [rlsStatus, setRlsStatus] = useState<boolean | null>(null);
+
+  const [triggerDlg, setTriggerDlg] = useState<{ mode: "create" | "edit"; trigger?: TriggerInfo } | null>(null);
+  const [fnDlg, setFnDlg] = useState<{ mode: "create" | "edit"; fn?: FunctionInfo } | null>(null);
+  const [policyDlg, setPolicyDlg] = useState<{ mode: "create" | "edit"; policy?: RlsPolicyInfo } | null>(null);
+  const [drop, setDrop] = useState<DropTarget | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -71,8 +85,29 @@ export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, ta
     setTriggers({ data: null, loading: false, error: null });
     setFunctions({ data: null, loading: false, error: null });
     setRls({ data: null, loading: false, error: null });
+    setRlsStatus(null);
     setActiveTab("triggers");
+    setTriggerDlg(null); setFnDlg(null); setPolicyDlg(null); setDrop(null);
   }, [open, connectionId, schema, table]);
+
+  const refetchTriggers = () => {
+    API.getTriggers(connectionId, schema, table)
+      .then(data => setTriggers({ data, loading: false, error: null }))
+      .catch(e => setTriggers({ data: null, loading: false, error: String(e) }));
+  };
+  const refetchFunctions = () => {
+    API.getFunctions(connectionId, schema)
+      .then(data => setFunctions({ data, loading: false, error: null }))
+      .catch(e => setFunctions({ data: null, loading: false, error: String(e) }));
+  };
+  const refetchRls = () => {
+    Promise.all([
+      API.getRlsPolicies(connectionId, schema, table),
+      API.tableRlsStatus(connectionId, schema, table),
+    ])
+      .then(([policies, status]) => { setRls({ data: policies, loading: false, error: null }); setRlsStatus(status); })
+      .catch(e => setRls(prev => ({ ...prev, error: String(e) })));
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -91,12 +126,35 @@ export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, ta
         .catch(e => { if (!cancelled) setFunctions({ data: null, loading: false, error: String(e) }); });
     } else {
       setRls(prev => ({ ...prev, loading: true, error: null }));
-      API.getRlsPolicies(connectionId, schema, table)
-        .then(data => { if (!cancelled) setRls({ data, loading: false, error: null }); markLoaded(); })
+      Promise.all([
+        API.getRlsPolicies(connectionId, schema, table),
+        API.tableRlsStatus(connectionId, schema, table),
+      ])
+        .then(([policies, status]) => { if (!cancelled) { setRls({ data: policies, loading: false, error: null }); setRlsStatus(status); } markLoaded(); })
         .catch(e => { if (!cancelled) setRls({ data: null, loading: false, error: String(e) }); });
     }
     return () => { cancelled = true; };
   }, [open, activeTab, loaded, connectionId, schema, table]);
+
+  const toggleTrigger = async (t: TriggerInfo) => {
+    if (await runDdlSql(connectionId, triggerToggleSql(schema, table, t.triggerName, !t.enabled), `Trigger "${t.triggerName}" ${t.enabled ? "disabled" : "enabled"}`)) {
+      refetchTriggers();
+    }
+  };
+
+  const toggleRls = async (enabled: boolean) => {
+    if (rlsStatus === null) return;
+    const prev = rlsStatus;
+    setRlsStatus(null);
+    if (await runDdlSql(connectionId, rlsToggleSql(schema, table, enabled), `Row level security ${enabled ? "enabled" : "disabled"}`)) {
+      refetchRls();
+    } else {
+      setRlsStatus(prev);
+    }
+  };
+
+  const iconBtn = "h-7 w-7 text-muted-foreground hidden group-hover:flex";
+  const cardCls = "border border-border rounded-lg p-3 space-y-1.5 group";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -115,16 +173,32 @@ export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, ta
             <ScrollArea className="h-full">
               <TabsContent value="triggers" className="mt-0">
                 <div className="space-y-2 pb-4">
+                  <div className="flex items-center justify-end pb-1">
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setTriggerDlg({ mode: "create" })}>
+                      <Plus className="h-3.5 w-3.5 mr-1" />New Trigger
+                    </Button>
+                  </div>
                   {triggers.loading ? <LoadingState />
                     : triggers.error ? <ErrorState message={triggers.error} />
                     : triggers.data && triggers.data.length === 0 ? <EmptyState>No triggers</EmptyState>
                     : triggers.data?.map(t => (
-                      <div key={t.triggerName} className="border border-border rounded-lg p-3 space-y-1.5">
+                      <div key={t.triggerName} className={cardCls}>
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-medium truncate">{t.triggerName}</span>
-                          <Badge variant={t.enabled ? "default" : "outline"} className={cn("px-1.5 py-0 h-5 text-[10px] shrink-0", !t.enabled && "text-muted-foreground")}>
-                            {t.enabled ? "ENABLED" : "DISABLED"}
-                          </Badge>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => toggleTrigger(t)}
+                              title={t.enabled ? "Disable trigger" : "Enable trigger"}
+                              className={cn(
+                                "px-1.5 py-0 h-5 text-[10px] rounded-md border border-border/60 cursor-pointer transition-colors",
+                                t.enabled ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                              )}
+                            >
+                              {t.enabled ? "ENABLED" : "DISABLED"}
+                            </button>
+                            <Button variant="ghost" size="icon" className={cn(iconBtn)} onClick={() => setTriggerDlg({ mode: "edit", trigger: t })} title="Edit trigger"><Pencil className="h-3.5 w-3.5" /></Button>
+                            <Button variant="ghost" size="icon" className={cn(iconBtn, "hover:text-destructive")} onClick={() => setDrop({ sql: triggerDropSql(schema, table, t.triggerName), message: `Drop trigger "${t.triggerName}"?`, okMsg: `Trigger "${t.triggerName}" dropped` })} title="Drop trigger"><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </div>
                         </div>
                         <div className="text-xs text-muted-foreground">{t.actionTiming} {t.eventManipulation}</div>
                         <CodeBlock value={t.actionStatement} />
@@ -134,14 +208,23 @@ export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, ta
               </TabsContent>
               <TabsContent value="functions" className="mt-0">
                 <div className="space-y-2 pb-4">
+                  <div className="flex items-center justify-end pb-1">
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setFnDlg({ mode: "create" })}>
+                      <Plus className="h-3.5 w-3.5 mr-1" />New Function
+                    </Button>
+                  </div>
                   {functions.loading ? <LoadingState />
                     : functions.error ? <ErrorState message={functions.error} />
                     : functions.data && functions.data.length === 0 ? <EmptyState>No functions</EmptyState>
                     : functions.data?.map(f => (
-                      <div key={`${f.functionName}(${f.arguments})`} className="border border-border rounded-lg p-3 space-y-1.5">
+                      <div key={`${f.functionName}(${f.arguments})`} className={cardCls}>
                         <div className="flex items-center justify-between gap-2 min-w-0">
                           <span className="text-sm font-medium font-mono text-xs truncate">{f.functionName}({f.arguments})</span>
-                          <Badge variant="outline" className="px-1.5 py-0 h-5 text-[10px] shrink-0">{f.language}</Badge>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Badge variant="outline" className="px-1.5 py-0 h-5 text-[10px]">{f.language}</Badge>
+                            <Button variant="ghost" size="icon" className={cn(iconBtn)} onClick={() => setFnDlg({ mode: "edit", fn: f })} title="Edit function"><Pencil className="h-3.5 w-3.5" /></Button>
+                            <Button variant="ghost" size="icon" className={cn(iconBtn, "hover:text-destructive")} onClick={() => setDrop({ sql: functionDropSql(schema, f.functionName, f.arguments), message: `Drop function "${f.functionName}"?`, okMsg: `Function "${f.functionName}" dropped` })} title="Drop function"><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </div>
                         </div>
                         <div className="text-xs text-muted-foreground">returns <span className="font-mono">{f.returnType}</span></div>
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -156,16 +239,33 @@ export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, ta
               </TabsContent>
               <TabsContent value="rls" className="mt-0">
                 <div className="space-y-2 pb-4">
+                  <div className="flex items-center justify-between border border-border/70 rounded-lg px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium">Row Level Security</p>
+                      <p className="text-xs text-muted-foreground truncate">{rlsStatus === null ? "Loading…" : rlsStatus ? "Enabled on this table" : "Disabled on this table"}</p>
+                    </div>
+                    <Switch checked={rlsStatus === true} onCheckedChange={toggleRls} disabled={rlsStatus === null} />
+                  </div>
+                  <div className="flex items-center justify-end pb-1">
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setPolicyDlg({ mode: "create" })}>
+                      <Plus className="h-3.5 w-3.5 mr-1" />New Policy
+                    </Button>
+                  </div>
                   {rls.loading ? <LoadingState />
                     : rls.error ? <ErrorState message={rls.error} />
                     : rls.data && rls.data.length === 0 ? <EmptyState>No RLS policies</EmptyState>
                     : rls.data?.map(p => {
                       const badge = commandBadge(p.command);
                       return (
-                        <div key={p.policyName} className="border border-border rounded-lg p-3 space-y-2">
+                        <div key={p.policyName} className={cardCls}>
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-medium truncate">{p.policyName}</span>
-                            <Badge variant="outline" className={cn("px-1.5 py-0 h-5 text-[10px] shrink-0", badge.className)}>{badge.label}</Badge>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Badge variant="outline" className={cn("px-1.5 py-0 h-5 text-[10px]", badge.className)}>{badge.label}</Badge>
+                              <Badge variant="outline" className="px-1.5 py-0 h-5 text-[10px] text-muted-foreground">{p.permissive ? "PERMISSIVE" : "RESTRICTIVE"}</Badge>
+                              <Button variant="ghost" size="icon" className={cn(iconBtn)} onClick={() => setPolicyDlg({ mode: "edit", policy: p })} title="Edit policy"><Pencil className="h-3.5 w-3.5" /></Button>
+                              <Button variant="ghost" size="icon" className={cn(iconBtn, "hover:text-destructive")} onClick={() => setDrop({ sql: policyDropSql(schema, table, p.policyName), message: `Drop policy "${p.policyName}"?`, okMsg: `Policy "${p.policyName}" dropped` })} title="Drop policy"><Trash2 className="h-3.5 w-3.5" /></Button>
+                            </div>
                           </div>
                           <div className="text-xs text-muted-foreground">
                             Roles: <span className="font-mono text-foreground">{p.roles.length > 0 ? p.roles.join(", ") : "PUBLIC"}</span>
@@ -181,6 +281,58 @@ export function TableDetailsPanel({ open, onOpenChange, connectionId, schema, ta
           </div>
         </Tabs>
       </SheetContent>
+
+      {triggerDlg && (
+        <TriggerDialog
+          open={!!triggerDlg}
+          onOpenChange={v => { if (!v) setTriggerDlg(null); }}
+          mode={triggerDlg.mode}
+          trigger={triggerDlg.trigger ?? null}
+          connectionId={connectionId}
+          schema={schema}
+          table={table}
+          onSaved={() => { refetchTriggers(); setTriggerDlg(null); }}
+        />
+      )}
+      {fnDlg && (
+        <FunctionDialog
+          open={!!fnDlg}
+          onOpenChange={v => { if (!v) setFnDlg(null); }}
+          mode={fnDlg.mode}
+          fn={fnDlg.fn ?? null}
+          connectionId={connectionId}
+          schema={schema}
+          onSaved={() => { refetchFunctions(); setFnDlg(null); }}
+        />
+      )}
+      {policyDlg && (
+        <PolicyDialog
+          open={!!policyDlg}
+          onOpenChange={v => { if (!v) setPolicyDlg(null); }}
+          mode={policyDlg.mode}
+          policy={policyDlg.policy ?? null}
+          connectionId={connectionId}
+          schema={schema}
+          table={table}
+          onSaved={() => { refetchRls(); setPolicyDlg(null); }}
+        />
+      )}
+      {drop && (
+        <DropDdlDialog
+          open={!!drop}
+          onOpenChange={v => { if (!v) setDrop(null); }}
+          connectionId={connectionId}
+          sql={drop.sql}
+          message={drop.message}
+          okMsg={drop.okMsg}
+          onDone={() => {
+            if (activeTab === "triggers") refetchTriggers();
+            else if (activeTab === "functions") refetchFunctions();
+            else refetchRls();
+            setDrop(null);
+          }}
+        />
+      )}
     </Sheet>
   );
 }
